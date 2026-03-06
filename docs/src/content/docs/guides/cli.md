@@ -17,7 +17,7 @@ Scaffolds a host app in `apps/<name>`.
 
 Generated apps currently use **Rspack** (`rspack.config.mjs`).
 
-Generated hosts include a small demo that loads a remote dynamically by reading `mfjs.federation.json` and using `@mfjs/runtime` (instead of relying on a static `import('remote/Module')`).
+Generated hosts include a pre-wired `bootstrap.tsx` that uses `@mfjs/runtime`'s `NavLink`, `RemoteOutlet`, `usePathname`, and `getRouter` to load and display remote apps.
 
 The generated `rspack.config.mjs` supports the **proxy remotes** dev workflow (see `mfjs dev --proxy-remotes` below).
 
@@ -25,7 +25,50 @@ The generated `rspack.config.mjs` supports the **proxy remotes** dev workflow (s
 
 Scaffolds a remote app in `apps/<name>`.
 
-Generated remotes include `src/remote.tsx` (the default exposed module).
+Generated remotes include:
+
+- `src/remote.tsx` — the default exposed module, using `RemoteApp` from `@mfjs/runtime`
+- `src/pages/index.tsx` — a starter home page
+- `src/mfjs.routes.ts` — initial generated routes file (regenerate any time with `mfjs routes`)
+
+### `mfjs routes`
+
+Scans `src/pages/` for `.tsx` files and generates `src/mfjs.routes.ts`.
+
+Run from inside a remote app:
+
+```sh
+cd apps/dashboard
+mfjs routes
+```
+
+#### File naming conventions
+
+| File | Generated route |
+|---|---|
+| `src/pages/index.tsx` | `/` |
+| `src/pages/settings.tsx` | `/settings` |
+| `src/pages/users/[id].tsx` | `/users/:id` |
+| `src/pages/reports/[year]/[month].tsx` | `/reports/:year/:month` |
+
+Square brackets `[param]` become `:param` dynamic segments in the route pattern.
+
+More specific routes are sorted before less specific ones; dynamic routes are placed before the root `/` catch-all.
+
+#### Generated output
+
+```ts
+// src/mfjs.routes.ts  (auto-generated — do not edit by hand)
+import type { RemotePageRoute } from '@mfjs/runtime';
+
+export const pages: RemotePageRoute[] = [
+  { path: '/users/:id', load: () => import('./pages/users/[id].tsx') },
+  { path: '/settings',  load: () => import('./pages/settings.tsx') },
+  { path: '/',          load: () => import('./pages/index.tsx') },
+];
+```
+
+Import `pages` in your `remote.tsx` and pass it to `<RemoteApp pages={pages} />`.
 
 ### `mfjs dev`
 
@@ -44,13 +87,19 @@ Starts all apps like `mfjs dev`, but also:
 - Writes `apps/<host>/mfjs.federation.proxy.json`
 - Runs the host with `MFJS_FEDERATION_FILE=mfjs.federation.proxy.json`
 - Rewrites each remote to a **same-origin URL** so the host fetches remotes through its own dev server:
-	- `dashboard@http://localhost:3000/mfjs/remotes/dashboard/remoteEntry.js`
+  - `dashboard@http://localhost:3000/mfjs/remotes/dashboard/remoteEntry.js`
 
 Important: when using proxy mode, the host dev server must proxy **all remote assets**, not just `remoteEntry.js`, because the remote may request additional split chunks at runtime.
 
 The recommended proxy mapping is:
 
 - `/mfjs/remotes/<remoteName>/*  ->  http://localhost:<remotePort>/*`
+
+#### `mfjs dev --hmr-remotes`
+
+Starts all apps and enables a small reload server. Passes `MFJS_DEV_RELOAD_URL` into each app so that when a remote recompiles, the host automatically refreshes.
+
+Generated hosts call `connectMfjsDevReload()` from `@mfjs/runtime` when `MFJS_DEV_RELOAD_URL` is present.
 
 ### `mfjs build`
 
@@ -77,17 +126,15 @@ For Rspack, the remote entry is served at:
 
 - `http://localhost:<remotePort>/remoteEntry.js`
 
-## Dynamic remote loading
-
-For fully dynamic loading (injecting `remoteEntry.js` at runtime and calling `container.get()`), use `@mfjs/runtime`.
+---
 
 ## Example workspace
 
-There’s a runnable end-to-end example under:
+There is a runnable end-to-end example under:
 
 - `examples/basic`
 
-If you want an automated end-to-end proof (host loads remote), run the opt-in Playwright smoke test from the repo root:
+If you want an automated end-to-end proof (host loads remote, routing works), run the opt-in Playwright smoke test from the repo root:
 
 - `MFJS_E2E=1 pnpm e2e`
 
@@ -96,6 +143,8 @@ For CI (always enabled), use:
 - `pnpm e2e:ci`
 
 Playwright writes an HTML report to `playwright-report/`.
+
+---
 
 ## Coverage
 

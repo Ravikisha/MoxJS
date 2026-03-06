@@ -35,6 +35,10 @@ Each app gets:
 - `mfjs.federation.json` (generated later)
 - `rspack.config.mjs`
 
+Generated **hosts** include a pre-wired `bootstrap.tsx` using `NavLink`, `RemoteOutlet`, `usePathname`, and `getRouter` from `@mfjs/runtime`.
+
+Generated **remotes** include a `src/remote.tsx` using `RemoteApp`, plus a starter `src/pages/index.tsx` and a generated `src/mfjs.routes.ts`.
+
 ## 3) Generate federation config
 
 ```bash
@@ -43,7 +47,7 @@ mfjs federation
 
 This writes `mfjs.federation.json` files for your apps under `apps/*`.
 
-## 4) Run dev servers (recommended)
+## 4) Run dev servers
 
 ### Option A: normal mode
 
@@ -57,37 +61,45 @@ Proxy mode makes the host load remotes through **same-origin** URLs:
 
 - `http://localhost:3000/mfjs/remotes/<name>/remoteEntry.js`
 
-Run it like this:
-
 ```bash
 mfjs dev --proxy-remotes
 ```
 
 #### Why proxy mode matters
 
-Remotes often produce additional split chunks at runtime. So if you proxy only `remoteEntry.js`, you can get runtime errors like:
-
-- `Loading chunk ... failed`
-
-In proxy mode, the host dev server must proxy **all remote assets**, not just `remoteEntry.js`.
-
-The generated `rspack.config.mjs` from `mfjs generate` is already configured to proxy:
+Remotes often produce additional split chunks at runtime. Proxying only `remoteEntry.js` can cause runtime errors like `Loading chunk ... failed`. In proxy mode the host proxies **all** remote assets:
 
 - `/mfjs/remotes/<remoteName>/*  ->  http://localhost:<remotePort>/*`
 
+The generated `rspack.config.mjs` is already configured with this mapping.
+
 ## 5) Open the host
 
-Open:
+Open `http://localhost:3000`. You should see the host render the remote's home page.
 
-- `http://localhost:3000`
+## 6) Generate remote page routes (optional)
 
-You should see the host render the remote.
+Add pages under `apps/dashboard/src/pages/`, then regenerate:
 
-## Next: routing
+```bash
+cd apps/dashboard
+mfjs routes
+```
 
-Generated hosts include a lightweight internal router (from `@mfjs/runtime`) that can mount remotes based on the current URL and supports cross-app navigation via `mfjs:navigate`.
+This writes (or overwrites) `src/mfjs.routes.ts`, which `RemoteApp` reads automatically.
 
-See: **Guides → Routing**.
+See the [Routing guide](/guides/routing/) for file naming conventions and the full two-tier routing model.
+
+## Next steps
+
+| Topic | Guide |
+|---|---|
+| How routing works (`NavLink`, `RemoteOutlet`, `RemoteApp`) | [Routing](/guides/routing/) |
+| All CLI commands | [CLI reference](/guides/cli/) |
+| Full API docs | [API reference](/reference/example/) |
+| Runnable example walkthrough | [Example walkthrough](/guides/example/) |
+
+---
 
 ## Troubleshooting
 
@@ -95,15 +107,24 @@ See: **Guides → Routing**.
 
 If you see `EADDRINUSE`, stop existing dev servers and retry.
 
-### Host shows “Remote container not found …”
+### Host shows "Remote container not found"
 
 This usually means the host could not load the remoteEntry (or one of its chunks).
 
-- If you’re using `--proxy-remotes`, confirm your host proxies **all** `/mfjs/remotes/<name>/*` paths.
+- If you are using `--proxy-remotes`, confirm your host proxies **all** `/mfjs/remotes/<name>/*` paths.
 - Confirm the remote is up at `http://localhost:<remotePort>/remoteEntry.js`.
+
+### `Invalid hook call` inside a remote
+
+This means React loaded twice. Ensure:
+
+1. The `remotes` map in `RemoteOutlet` uses native federation imports (`() => import('dashboard/App')`), **not** `loadRemoteModule()`.
+2. The host sets `eager: true` on shared React/ReactDOM; the remote uses `eager: false`.
+
+### Navigation stops working (StrictMode)
+
+Ensure `getRouter()` is called at **module level** in `bootstrap.tsx`, not inside a `useEffect`. See the [Routing guide](/guides/routing/) for details.
 
 ### `mfjs.federation.json` 404
 
-In dev, `mfjs.federation.json` is fetched from the app root.
-
-Generated templates configure the dev server to also serve the app directory as static content so this file can be fetched.
+In dev, `mfjs.federation.json` is fetched from the app root. Generated templates configure the dev server to serve the app directory as static content so this file can be fetched.

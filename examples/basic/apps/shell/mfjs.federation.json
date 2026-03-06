@@ -7,22 +7,18 @@
   "shared": {
     "react": {
       "singleton": true,
-      "eager": true,
       "requiredVersion": false
     },
     "react-dom": {
       "singleton": true,
-      "eager": true,
       "requiredVersion": false
     },
     "@mfjs/event-bus": {
       "singleton": true,
-      "eager": true,
       "requiredVersion": false
     },
     "@mfjs/runtime": {
       "singleton": true,
-      "eager": true,
       "requiredVersion": false
     }
   }

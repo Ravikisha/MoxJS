@@ -2,18 +2,6 @@
 title: MFJS
 description: Opinionated micro-frontend tooling with a workspace-aware CLI + runtime.
 template: splash
-# hero:
-# 	tagline: Build micro-frontends with Rspack + Module Federation.
-# 	image:
-# 		file: ../../assets/houston.webp
-# 	actions:
-# 		- text: Getting started
-# 			link: /guides/getting-started/
-# 			icon: right-arrow
-# 		- text: CLI reference
-# 			link: /guides/cli/
-# 			icon: right-arrow
-
 hero:
   tagline: Build micro-frontends with Rspack + Module Federation.
   image:
@@ -22,6 +10,9 @@ hero:
   actions:
     - text: Getting started
       link: /guides/getting-started/
+      icon: right-arrow
+    - text: Routing guide
+      link: /guides/routing/
       icon: right-arrow
     - text: CLI Reference
       link: /guides/cli/
@@ -33,11 +24,19 @@ import { Card, CardGrid } from '@astrojs/starlight/components';
 ## Quick links
 
 <CardGrid stagger>
-	<Card title="Getting started" icon="rocket">
-		Create a new workspace, generate a host + remote, and run dev servers.
+	<Card title="Getting started" icon="rocket" href="/guides/getting-started/">
+		Create a new workspace, generate a host + remote, and run dev servers in minutes.
 	</Card>
 
-	<Card title="CLI" icon="terminal">
-		Reference for `mfjs init`, `mfjs generate`, `mfjs federation`, and `mfjs dev`.
+	<Card title="Routing" icon="open-book" href="/guides/routing/">
+		Two-tier routing with `NavLink`, `RemoteOutlet`, `RemoteApp`, and file-based page generation.
+	</Card>
+
+	<Card title="CLI" icon="terminal" href="/guides/cli/">
+		Reference for `mfjs init`, `mfjs generate`, `mfjs federation`, `mfjs routes`, and `mfjs dev`.
+	</Card>
+
+	<Card title="API Reference" icon="information" href="/reference/example/">
+		Full `@mfjs/runtime` API: types, hooks, components, and low-level utilities.
 	</Card>
 </CardGrid>

@@ -2,28 +2,23 @@
   "name": "dashboard",
   "filename": "remoteEntry.js",
   "exposes": {
-    "./App": "./src/remote.tsx",
-    "./Routes": "./src/mfjs.routes.ts"
+    "./App": "./src/remote.tsx"
   },
   "shared": {
     "react": {
       "singleton": true,
-      "eager": false,
       "requiredVersion": false
     },
     "react-dom": {
       "singleton": true,
-      "eager": false,
       "requiredVersion": false
     },
     "@mfjs/event-bus": {
       "singleton": true,
-      "eager": false,
       "requiredVersion": false
     },
     "@mfjs/runtime": {
       "singleton": true,
-      "eager": false,
       "requiredVersion": false
     }
   }
