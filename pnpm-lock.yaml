@@ -11,24 +11,12 @@ importers:
       '@playwright/test':
         specifier: ^1.54.2
         version: 1.58.2
-      '@types/react':
-        specifier: ^19.2.14
-        version: 19.2.14
-      '@types/react-dom':
-        specifier: ^19.2.3
-        version: 19.2.3(@types/react@19.2.14)
       '@vitest/coverage-v8':
         specifier: ^2.1.9
         version: 2.1.9(vitest@2.1.9(@types/node@22.19.13)(jsdom@28.1.0))
       jsdom:
         specifier: ^28.1.0
         version: 28.1.0
-      react:
-        specifier: ^18.3.1
-        version: 18.3.1
-      react-dom:
-        specifier: ^18.3.1
-        version: 18.3.1(react@18.3.1)
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.13)(jsdom@28.1.0)
@@ -55,9 +43,6 @@ importers:
       '@mfjs/event-bus':
         specifier: workspace:*
         version: link:../../../../libs/event-bus
-      '@mfjs/react-router':
-        specifier: workspace:*
-        version: link:../../../../libs/react-router
       '@mfjs/runtime':
         specifier: workspace:*
         version: link:../../../../libs/runtime
@@ -95,9 +80,6 @@ importers:
       '@mfjs/event-bus':
         specifier: workspace:*
         version: link:../../../../libs/event-bus
-      '@mfjs/react-router':
-        specifier: workspace:*
-        version: link:../../../../libs/react-router
       '@mfjs/runtime':
         specifier: workspace:*
         version: link:../../../../libs/runtime
@@ -169,6 +151,18 @@ importers:
 
   libs/runtime:
     devDependencies:
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.28
+      '@types/react-dom':
+        specifier: ^18.3.1
+        version: 18.3.7(@types/react@18.3.28)
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
@@ -1629,16 +1623,8 @@ packages:
     peerDependencies:
       '@types/react': ^18.0.0
 
-  '@types/react-dom@19.2.3':
-    resolution: {integrity: sha512-jp2L/eY6fn+KgVVQAOqYItbF0VY/YApe5Mz2F0aykSO8gx31bYCZyvSeYxCHKvzHG5eZjc+zyaS5BrBWya2+kQ==}
-    peerDependencies:
-      '@types/react': ^19.2.0
-
   '@types/react@18.3.28':
     resolution: {integrity: sha512-z9VXpC7MWrhfWipitjNdgCauoMLRdIILQsAEV+ZesIzBq/oUlxk0m3ApZuMFCXdnS4U7KrI+l3WRUEGQ8K1QKw==}
-
-  '@types/react@19.2.14':
-    resolution: {integrity: sha512-ilcTH/UniCkMdtexkoCN0bI7pMcJDvmQFPvuPvmEaYA/NSfFTAgdUSLAoVjaRJm7+6PvcM+q1zYOwS4wTYMF9w==}
 
   '@types/retry@0.12.2':
     resolution: {integrity: sha512-XISRgDJ2Tc5q4TRqvgJtzsRkFYNJzZrhTdtMoGVBttwzzQJkPnS3WWTFc7kuDRoPtPakl+T+OfdEUjYJj7Jbow==}
@@ -5626,17 +5612,9 @@ snapshots:
     dependencies:
       '@types/react': 18.3.28
 
-  '@types/react-dom@19.2.3(@types/react@19.2.14)':
-    dependencies:
-      '@types/react': 19.2.14
-
   '@types/react@18.3.28':
     dependencies:
       '@types/prop-types': 15.7.15
-      csstype: 3.2.3
-
-  '@types/react@19.2.14':
-    dependencies:
       csstype: 3.2.3
 
   '@types/retry@0.12.2': {}
