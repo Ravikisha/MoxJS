@@ -15,9 +15,23 @@ const sharedWithReactEager = federation?.shared
       ...(federation.shared.react || {}),
       eager: true,
       singleton: true,
+      strictVersion: true,
+      requiredVersion: '^18.3.1',
     },
     'react-dom': {
       ...(federation.shared['react-dom'] || {}),
+      eager: true,
+      singleton: true,
+      strictVersion: true,
+      requiredVersion: '^18.3.1',
+    },
+    '@mfjs/event-bus': {
+      ...(federation.shared['@mfjs/event-bus'] || {}),
+      eager: true,
+      singleton: true,
+    },
+    '@mfjs/runtime': {
+      ...(federation.shared['@mfjs/runtime'] || {}),
       eager: true,
       singleton: true,
     },

@@ -1,31 +1,202 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest';
-import { loadRemoteEntry } from '../src/remote-loader.js';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
+import { loadRemoteEntry, initRemoteContainer, loadRemoteModule } from '../src/remote-loader.js';
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Simulate a remote container that fires onload and sets the global. */
+function mockScriptLoad(name: string) {
+  return vi.spyOn(document.head, 'appendChild').mockImplementation((node: any) => {
+    HTMLElement.prototype.appendChild.call(document.head, node);
+    setTimeout(() => {
+      (globalThis as any)[name] = makeContainer();
+      node.onload?.();
+    }, 0);
+    return node;
+  });
+}
+
+function makeContainer() {
+  return {
+    init: vi.fn(async () => {}),
+    get: vi.fn(async () => () => ({ TheComponent: 'mock' })),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// loadRemoteEntry
+// ---------------------------------------------------------------------------
 
 describe('loadRemoteEntry', () => {
   beforeEach(() => {
     document.head.innerHTML = '';
+    delete (globalThis as any).dashboard;
+    delete (globalThis as any).analytics;
   });
 
-  it('injects a script tag once per remote', async () => {
-    // Stub script loading.
-    const append = vi.spyOn(document.head, 'appendChild').mockImplementation((node: any) => {
-  // Make the node visible to querySelectorAll.
-  HTMLElement.prototype.appendChild.call(document.head, node);
-      // simulate immediate load
-      setTimeout(() => {
-        // remoteEntry.js assigns the container global (window[remoteName] = container)
-        // before/around firing onload.
-        (globalThis as any).dashboard = { init: vi.fn(async () => {}), get: vi.fn(async () => () => ({})) };
-        node.onload?.();
-      }, 0);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('injects a script tag into document.head with the correct src', async () => {
+    mockScriptLoad('dashboard');
+
+    await loadRemoteEntry({ name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' });
+
+    const script = document.head.querySelector('#mfjs-remote-dashboard') as HTMLScriptElement;
+    expect(script).not.toBeNull();
+    expect(script.src).toBe('http://localhost:3001/remoteEntry.js');
+  });
+
+  it('deduplication: calling twice with same remote only injects one script tag', async () => {
+    mockScriptLoad('dashboard');
+
+    await loadRemoteEntry({ name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' });
+    await loadRemoteEntry({ name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' });
+
+    const scripts = document.head.querySelectorAll('#mfjs-remote-dashboard');
+    expect(scripts.length).toBe(1);
+  });
+
+  it('skips injection when the container global is already present (pre-loaded)', async () => {
+    (globalThis as any).dashboard = makeContainer();
+    const appendSpy = vi.spyOn(document.head, 'appendChild');
+
+    await loadRemoteEntry({ name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' });
+
+    expect(appendSpy).not.toHaveBeenCalled();
+  });
+
+  it('rejects with a clear error when the script fires onerror', async () => {
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node: any) => {
+      HTMLElement.prototype.appendChild.call(document.head, node);
+      setTimeout(() => node.onerror?.(), 0);
       return node;
     });
 
-    await loadRemoteEntry({ name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' });
-    await loadRemoteEntry({ name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' });
+    await expect(
+      loadRemoteEntry({ name: 'analytics', entryUrl: 'http://bad-host/remoteEntry.js' })
+    ).rejects.toThrow('Failed to load remoteEntry');
+  });
 
-    const scripts = Array.from(document.head.querySelectorAll('script')).filter((s) => s.id === 'mfjs-remote-dashboard');
-    expect(scripts.length).toBe(1);
-    expect(append).toHaveBeenCalled();
+  it('rejects with timeout error when container global is never assigned after script load', async () => {
+    // Script fires onload but never sets the global.
+    vi.spyOn(document.head, 'appendChild').mockImplementation((node: any) => {
+      HTMLElement.prototype.appendChild.call(document.head, node);
+      setTimeout(() => node.onload?.(), 0);
+      return node;
+    });
+
+    vi.useFakeTimers();
+    // Attach the rejection handler BEFORE advancing timers so it's never unhandled.
+    const p = loadRemoteEntry({ name: 'analytics', entryUrl: 'http://localhost:3002/remoteEntry.js' });
+    const caught = p.catch(() => 'caught');
+    await vi.runAllTimersAsync();
+    await expect(caught).resolves.toBe('caught');
+    await expect(p).rejects.toThrow('"analytics" not found');
+    vi.useRealTimers();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// initRemoteContainer
+// ---------------------------------------------------------------------------
+
+describe('initRemoteContainer', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    delete (globalThis as any).dashboard;
+    delete (globalThis as any).__federation_init_sharing__;
+    delete (globalThis as any).__federation_shared__;
+    delete (globalThis as any).__webpack_init_sharing__;
+    delete (globalThis as any).__webpack_share_scopes__;
+  });
+
+  it('throws when the container global is not present', async () => {
+    await expect(initRemoteContainer('dashboard')).rejects.toThrow(
+      'Remote container not found on global: dashboard'
+    );
+  });
+
+  it('uses Rspack __federation_init_sharing__ path first', async () => {
+    const container = makeContainer();
+    (globalThis as any).dashboard = container;
+
+    const rspackInit = vi.fn(async () => {});
+    const fakeScope = { default: {} };
+    (globalThis as any).__federation_init_sharing__ = rspackInit;
+    (globalThis as any).__federation_shared__ = fakeScope;
+
+    await initRemoteContainer('dashboard');
+
+    expect(rspackInit).toHaveBeenCalledWith('default');
+    expect(container.init).toHaveBeenCalledWith(fakeScope);
+  });
+
+  it('falls back to webpack __webpack_init_sharing__ when Rspack globals absent', async () => {
+    const container = makeContainer();
+    (globalThis as any).dashboard = container;
+
+    const webpackInit = vi.fn(async () => {});
+    (globalThis as any).__webpack_init_sharing__ = webpackInit;
+    (globalThis as any).__webpack_share_scopes__ = { default: { react: {} } };
+
+    await initRemoteContainer('dashboard');
+
+    expect(webpackInit).toHaveBeenCalledWith('default');
+    expect(container.init).toHaveBeenCalledWith({ react: {} });
+  });
+
+  it('uses last-resort empty scope when no MF runtime globals present', async () => {
+    const container = makeContainer();
+    (globalThis as any).dashboard = container;
+
+    await initRemoteContainer('dashboard');
+
+    expect(container.init).toHaveBeenCalledWith({});
+  });
+
+  it('is safe to call multiple times (container.init throws on second call but does not propagate)', async () => {
+    const container = makeContainer();
+    container.init.mockRejectedValueOnce(new Error('already initialised'));
+    (globalThis as any).dashboard = container;
+
+    await expect(initRemoteContainer('dashboard')).resolves.toBeDefined();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// loadRemoteModule
+// ---------------------------------------------------------------------------
+
+describe('loadRemoteModule', () => {
+  beforeEach(() => {
+    document.head.innerHTML = '';
+    delete (globalThis as any).dashboard;
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns the module produced by container.get() factory', async () => {
+    mockScriptLoad('dashboard');
+
+    const mod = await loadRemoteModule<{ TheComponent: string }>(
+      { name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' },
+      './App'
+    );
+
+    expect(mod.TheComponent).toBe('mock');
+  });
+
+  it('passes the exposed module name to container.get()', async () => {
+    mockScriptLoad('dashboard');
+
+    await loadRemoteModule({ name: 'dashboard', entryUrl: 'http://localhost:3001/remoteEntry.js' }, './Widget');
+
+    const container = (globalThis as any).dashboard;
+    expect(container.get).toHaveBeenCalledWith('./Widget');
   });
 });

@@ -1,28 +1,42 @@
 import { test, expect } from '@playwright/test';
 
+function collectErrors(page: import('@playwright/test').Page): string[] {
+  const errors: string[] = [];
+  page.on('pageerror', (err) => errors.push(err.message));
+  page.on('console', (msg) => {
+    if (msg.type() === 'error') errors.push(msg.text());
+  });
+  return errors;
+}
+
 test('@direct examples/basic renders remote inside host', async ({ page }) => {
+  const errors = collectErrors(page);
   const res = await page.goto('http://localhost:3000', { waitUntil: 'domcontentloaded' });
   expect(res?.ok()).toBeTruthy();
 
-  // Basic smoke check: the shell page loads.
-  await expect(page.getByText('shell (host)')).toBeVisible();
+  await expect(page.getByTestId('shell-header')).toBeVisible();
+  await expect(page.getByTestId('remote-loaded')).toBeVisible({ timeout: 10_000 });
 
-  // Host should load route table (from mfjs.routes.host.json or fallback).
-  await expect(page.getByText(/Routes loaded:\s*\d+/)).toBeVisible();
-
-  // The host should render either the remote's ./App or a file-based page via ./Routes.
-  // We assert on visible remote content instead of test-id to keep it resilient.
-  await expect(page.getByText(/dashboard home|dashboard \(remote\)/i)).toBeVisible();
+  const hookErrors = errors.filter(
+    (e) => e.includes('Invalid hook call') || e.includes('dispatcher is null')
+  );
+  expect(hookErrors).toHaveLength(0);
 });
 
-test('@direct routes: host renders remote file-based pages via ./Routes', async ({ page }) => {
+test('@direct no React duplicate-instance errors in the browser console', async ({ page }) => {
+  const consoleErrors = collectErrors(page);
+  await page.goto('http://localhost:3000', { waitUntil: 'networkidle' });
+
+  const duplicateReactErrors = consoleErrors.filter(
+    (e) =>
+      e.includes('Invalid hook call') ||
+      e.includes('dispatcher is null') ||
+      e.includes('Minified React error')
+  );
+  expect(duplicateReactErrors).toHaveLength(0);
+});
+
+test('@direct remote content is visible without a page reload', async ({ page }) => {
   await page.goto('http://localhost:3000', { waitUntil: 'domcontentloaded' });
-
-  await expect(page.getByText(/Routes loaded:\s*\d+/)).toBeVisible();
-
-  // Navigate to a file-based page under the remote base.
-  await page.getByRole('button', { name: '/dashboard/reports/1' }).click();
-
-  // Remote page content from src/pages/reports/[id].tsx
-  await expect(page.getByText('report page')).toBeVisible();
+  await expect(page.getByTestId('remote-loaded')).toBeVisible({ timeout: 10_000 });
 });

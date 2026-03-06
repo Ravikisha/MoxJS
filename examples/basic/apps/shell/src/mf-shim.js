@@ -12,17 +12,19 @@
 				: {});
 
 	try {
-
-		// If webpack-like globals already exist, don't touch them.
-		if (typeof g.__webpack_init_sharing__ === 'function' && g.__webpack_share_scopes__) return;
-
+		// Always prefer Rspack federation runtime when present.
+		// Some plugins/tools may create a partial __webpack_share_scopes__ object that breaks sharing.
+		// We overwrite to match webpack's expected shape: { default: <shareScope> }.
 		if (typeof g.__federation_init_sharing__ === 'function') {
 			g.__webpack_init_sharing__ = async (scope) => g.__federation_init_sharing__(scope);
 		}
 
-		if (g.__federation_shared__ && !g.__webpack_share_scopes__) {
-			// Align the shape to what container.init expects in webpack land.
-			g.__webpack_share_scopes__ = g.__federation_shared__;
+		if (g.__federation_shared__) {
+			const expected = g.__federation_shared__;
+			const currentDefault = g.__webpack_share_scopes__?.default;
+			if (currentDefault !== expected) {
+				g.__webpack_share_scopes__ = { default: expected };
+			}
 		}
 	} catch {
 		// best-effort shim; ignore

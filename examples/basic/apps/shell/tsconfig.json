@@ -11,6 +11,8 @@
     "strict": true,
     "jsx": "react-jsx",
     "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "noEmit": true,
     "types": []
   },
   "include": [

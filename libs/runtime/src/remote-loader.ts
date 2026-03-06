@@ -106,21 +106,27 @@ export async function initRemoteContainer(remoteName: string) {
     }
   };
 
-  // Webpack MF runtime
-  if (g.__webpack_init_sharing__) {
-    await g.__webpack_init_sharing__("default");
-    await safeInit(g.__webpack_share_scopes__?.default);
-    return container;
-  }
-
-  // Rspack MF runtime
-  if (g.__federation_init_sharing__) {
+  // Prefer the Rspack @module-federation/runtime globals first.
+  // The host's inline shim exposes __webpack_init_sharing__ / __webpack_share_scopes__
+  // as live getters that delegate to the Rspack globals, so both paths converge on the
+  // same share-scope object.  We call __federation_init_sharing__ directly to avoid any
+  // intermediate wrapping.
+  if (typeof g.__federation_init_sharing__ === 'function') {
     await g.__federation_init_sharing__("default");
-    await safeInit(g.__federation_shared__?.default);
+    // __federation_shared__ holds the live scope object; pass it directly to container.init
+    // so the remote resolves react/react-dom from the host's singleton pool.
+    await safeInit(g.__federation_shared__);
     return container;
   }
 
-  // Fallback
+  // Webpack MF runtime fallback (used when Rspack globals are not present).
+  if (typeof g.__webpack_init_sharing__ === 'function') {
+    await g.__webpack_init_sharing__("default");
+    await safeInit(g.__webpack_share_scopes__?.default ?? g.__webpack_share_scopes__);
+    return container;
+  }
+
+  // Last-resort fallback (no MF runtime detected).
   await safeInit({});
   return container;
 }

@@ -14,9 +14,23 @@ const sharedWithReactEager = federation?.shared
       ...(federation.shared.react || {}),
       eager: true,
       singleton: true,
+      strictVersion: true,
+      requiredVersion: '^18.3.1',
     },
     'react-dom': {
       ...(federation.shared['react-dom'] || {}),
+      eager: true,
+      singleton: true,
+      strictVersion: true,
+      requiredVersion: '^18.3.1',
+    },
+    '@mfjs/event-bus': {
+      ...(federation.shared['@mfjs/event-bus'] || {}),
+      eager: true,
+      singleton: true,
+    },
+    '@mfjs/runtime': {
+      ...(federation.shared['@mfjs/runtime'] || {}),
       eager: true,
       singleton: true,
     },
@@ -25,12 +39,13 @@ const sharedWithReactEager = federation?.shared
 
 export default {
   mode: process.env.NODE_ENV === 'production' ? 'production' : 'development',
-  entry: './src/main.tsx',
+  entry: {
+    main: ['./src/mf-shim.js', './src/main.tsx'],
+  },
   experiments: {
     css: true,
-    // Lazy compilation proxies have been causing runtime HMR crashes in this repo's setup
-    // ("currentUpdate is undefined" in *lazy-compilation-proxy* hot-update modules).
-    // Disable it so routes/pages can be code-split normally without proxy endpoints.
+    // Lazy compilation proxies crash hot-update modules when remoteEntry is used.
+    // Keep it off for all entry points and async chunks inside this remote.
     lazyCompilation: false,
   },
   devServer: {

@@ -30,21 +30,17 @@ describe('mfjs generate', () => {
     expect(meta.exposes).toEqual({ './App': './src/remote.tsx' });
   });
 
-  it('host main.tsx contains a dynamic import of dashboard/App (proof-of-life)', async () => {
+  it('host bootstrap.tsx uses loadRemoteModule to load the remote (proof-of-life)', async () => {
     const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-cli-'))) as string;
 
   await run(['host', 'shell', '--dir', tmp, '--port', '3000'], tmp);
 
-    const main = await fs.readFile(path.join(tmp, 'apps', 'shell', 'src', 'main.tsx'), 'utf8');
-  expect(main).toContain("from '@mfjs/runtime'");
-  expect(main).toContain('createRouter');
-  expect(main).toContain('dispatchMfjsNavigate');
-  expect(main).toContain('MFJS_FEDERATION_FILE');
-  // File-based routing manifest (host route table)
-  expect(main).toContain("fetch('/mfjs.routes.host.json')");
-  expect(main).toContain('loadHostRoutes');
-  expect(main).toContain('fetch(federationUrl)');
-  expect(main).toContain('loadRemoteModule');
+    // After introducing the async boundary, app code lives in bootstrap.tsx
+    const bootstrap = await fs.readFile(path.join(tmp, 'apps', 'shell', 'src', 'bootstrap.tsx'), 'utf8');
+    expect(bootstrap).toContain("from '@mfjs/runtime'");
+    expect(bootstrap).toContain('loadRemoteModule');
+    expect(bootstrap).toContain('connectMfjsDevReload');
+    expect(bootstrap).toContain('MFJS_DEV_RELOAD_URL');
   });
 
   test('host exposes MFJS_DEV_RELOAD_URL to client and connects reload client when present', async () => {
@@ -53,14 +49,15 @@ describe('mfjs generate', () => {
     await run(['host', 'shell', '--dir', tmp, '--port', '3000'], tmp);
 
     const rspackConfig = await fs.readFile(path.join(tmp, 'apps', 'shell', 'rspack.config.mjs'), 'utf8');
-    const hostMain = await fs.readFile(path.join(tmp, 'apps', 'shell', 'src', 'main.tsx'), 'utf8');
+    // After introducing the async boundary, app code lives in bootstrap.tsx
+    const hostBootstrap = await fs.readFile(path.join(tmp, 'apps', 'shell', 'src', 'bootstrap.tsx'), 'utf8');
 
     // Assert rspack config exposes import.meta.env.MFJS_DEV_RELOAD_URL
     expect(rspackConfig).toContain('import.meta.env.MFJS_DEV_RELOAD_URL');
 
     // Assert host wires the runtime reload client off import.meta.env
-    expect(hostMain).toContain('connectMfjsDevReload');
-    expect(hostMain).toContain('MFJS_DEV_RELOAD_URL');
+    expect(hostBootstrap).toContain('connectMfjsDevReload');
+    expect(hostBootstrap).toContain('MFJS_DEV_RELOAD_URL');
   });
 
   test('rspack config enables source maps in dev by default', async () => {
@@ -106,5 +103,51 @@ describe('mfjs generate', () => {
     expect(cfg).toContain('process.env.MFJS_ON_DEMAND_STARTER_URL');
     expect(cfg).toContain('/__mfjs/start-remote?name=');
     expect(cfg).toContain('onProxyReq');
+  });
+
+  it('scaffolded app includes mf-shim.js as first entry and lazyCompilation: false', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-cli-'))) as string;
+    await run(['host', 'shell', '--dir', tmp, '--port', '3000'], tmp);
+
+    const cfg = await fs.readFile(path.join(tmp, 'apps', 'shell', 'rspack.config.mjs'), 'utf8');
+    // Entry must list mf-shim.js before main.tsx so the share-scope bridge runs first
+    expect(cfg).toContain("'./src/mf-shim.js'");
+    expect(cfg).toContain("'./src/main.tsx'");
+    expect(cfg.indexOf('./src/mf-shim.js')).toBeLessThan(cfg.indexOf('./src/main.tsx'));
+    // Lazy compilation must be disabled to prevent hot-update proxy crashes in MF containers
+    expect(cfg).toContain('lazyCompilation: false');
+
+    // The shim file itself must exist
+    const shim = await fs.readFile(path.join(tmp, 'apps', 'shell', 'src', 'mf-shim.js'), 'utf8');
+    expect(shim).toContain('__federation_init_sharing__');
+    expect(shim).toContain('__webpack_init_sharing__');
+    expect(shim).toContain('__webpack_share_scopes__');
+  });
+
+  it('scaffolded app uses async boundary pattern: main.tsx imports bootstrap.tsx dynamically', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-cli-'))) as string;
+    await run(['host', 'shell', '--dir', tmp, '--port', '3000'], tmp);
+
+    const main = await fs.readFile(path.join(tmp, 'apps', 'shell', 'src', 'main.tsx'), 'utf8');
+    // main.tsx must only contain a dynamic import — no direct React/ReactDOM imports.
+    // This async boundary lets Module Federation initialize the share scope before any
+    // shared dep is consumed synchronously (prevents RUNTIME-006 loadShareSync errors).
+    expect(main).toContain("import('./bootstrap')");
+    expect(main).not.toContain("import React");
+    expect(main).not.toContain("import ReactDOM");
+
+    // The actual app code must live in bootstrap.tsx
+    const bootstrap = await fs.readFile(path.join(tmp, 'apps', 'shell', 'src', 'bootstrap.tsx'), 'utf8');
+    expect(bootstrap).toContain('import React');
+    expect(bootstrap).toContain('ReactDOM.createRoot');
+  });
+
+  it('tsconfig has allowImportingTsExtensions and noEmit for .tsx dynamic imports', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-cli-'))) as string;
+    await run(['remote', 'dashboard', '--dir', tmp, '--port', '3001'], tmp);
+
+    const tsconfig = await fs.readJson(path.join(tmp, 'apps', 'dashboard', 'tsconfig.json'));
+    expect(tsconfig.compilerOptions.allowImportingTsExtensions).toBe(true);
+    expect(tsconfig.compilerOptions.noEmit).toBe(true);
   });
 });

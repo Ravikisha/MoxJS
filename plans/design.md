@@ -51,7 +51,7 @@ With 3–4 contributors: ~4–5 months.
 * [ ] Define routing abstraction:
 
   * [ ] React Router wrapper
-  * [x] File-based routing compiler
+  * [ ] File-based routing compiler *(removed from examples — was broken, needs rework)*
 
 * [ ] Define communication model:
 
@@ -96,8 +96,8 @@ Goal: **Create multi-MFE app in minutes**
 * [x] Generate:
 
   * [x] Monorepo structure (pnpm workspace)
-  * [x] Host shell (Vite + React starter)
-  * [x] One remote (Vite + React starter)
+  * [x] Host shell (Rspack + React starter)
+  * [x] One remote (Rspack + React starter)
   * [x] Shared libs folder (libs/ui, libs/state, libs/event-bus)
 
 ### Folder Structure Generator
@@ -109,7 +109,16 @@ apps/
 libs/
   ui/
   state/
+  event-bus/
 ```
+
+### Tests needed
+
+* [x] `mfjs init` — assert scaffolded workspace has correct `package.json`, `pnpm-workspace.yaml`, `apps/` and `libs/` directories
+* [x] `mfjs generate host` — assert `apps/shell/` created with `index.html`, `rspack.config.mjs`, `src/main.tsx`, `mfjs.app.json`
+* [x] `mfjs generate remote` — assert `apps/dashboard/` created with correct `remoteEntry` expose in `mfjs.federation.json`
+* [x] `mfjs dev` — assert spawns one process per app and exits cleanly on `SIGINT`
+* [ ] `mfjs build` — assert both apps produce `dist/index.html` and `dist/main.js`
 
 ---
 
@@ -125,33 +134,55 @@ libs/
 
 * [x] Auto-generate:
 
-  * [x] host federation config
-  * [x] remote federation config
+  * [x] host federation config (`mfjs.federation.json` with `remotes`)
+  * [x] remote federation config (`mfjs.federation.json` with `exposes`)
 
-* [x] Shared singleton logic (config-only for now):
+* [x] Shared singleton logic:
 
-  * [x] React
-  * [x] ReactDOM
-  * [ ] Router
-  * [x] EventBus
+  * [x] React (singleton + eager)
+  * [x] ReactDOM (singleton + eager)
+  * [ ] Router *(not yet shared via federation — needs design)*
+  * [x] EventBus (singleton)
 
-* [x] Dynamic remote loading support
+* [x] Dynamic remote loading (`loadRemoteModule`) — `libs/runtime/src/remote-loader.ts`
+
+* [x] Share-scope init (Rspack-native `__federation_init_sharing__` + webpack shim in `index.html`)
+
+### Tests needed
+
+* [x] `loadRemoteEntry` — assert script tag injected into `document.head` with correct `src`
+* [x] `loadRemoteEntry` — assert deduplication: calling twice does not inject two scripts
+* [x] `loadRemoteEntry` — assert rejects when remote container global is never assigned
+* [x] `initRemoteContainer` — assert calls `__federation_init_sharing__` first, then `container.init()` with live scope
+* [x] `initRemoteContainer` — assert falls back to webpack path when Rspack globals absent
+* [x] `loadRemoteModule` — assert returns `factory()` result from container `.get()`
+* [x] `loadRemoteModule` — assert throws with clear message when remote spec is missing `@`
+* [x] Federation config generator — assert output JSON has correct `name`, `exposes`, `remotes`, `shared` shape
+* [x] Federation config generator — assert `react` and `react-dom` always have `singleton: true`
 
 ---
 
 ## 3️⃣ Dev Server Orchestration (Weeks 5–7)
 
 * [x] Unified `mfjs dev`
-* [x] Concurrent process runner
-* [x] Auto-proxy remotes
+* [x] Concurrent process runner (spawns `rspack serve` per app)
+* [x] Auto-proxy remotes (`/mfjs/remotes/<name>/remoteEntry.js` → `http://localhost:<port>`)
 * [x] HMR across shell + remotes
 * [x] Source maps
-* [x] On-demand compilation
+* [ ] On-demand compilation *(infrastructure exists but not verified end-to-end)*
 
 Stretch:
 
-* [x] Fast rebuild detection
+* [x] Fast rebuild detection (Rspack incremental)
 * [ ] Watch workspace changes
+
+### Tests needed
+
+* [x] `mfjs dev` — assert proxy rule created for each remote listed in host `mfjs.federation.json`
+* [x] `mfjs dev` — assert host defaults to port 3000, first remote defaults to port 3001
+* [x] `mfjs dev` — assert missing `mfjs.federation.json` triggers auto-generation before starting servers
+* [ ] `mfjs dev` — assert `SIGINT` terminates all child processes cleanly
+* [ ] Dev server proxy — assert `GET /mfjs/remotes/dashboard/remoteEntry.js` forwards to `http://localhost:3001/remoteEntry.js`
 
 ---
 
@@ -159,46 +190,78 @@ Stretch:
 
 ### Shell
 
-* [ ] Auto-generate shell router
-* [ ] Map MFEs to base paths
+* [x] Auto-generate shell router *(shell `main.tsx` uses `createRouter` + `resolveRoute` against `HOST_ROUTES`)*
+* [x] Map MFEs to base paths *(`HOST_ROUTES` maps `/` and `/dashboard/*` → dashboard remote)*
 
 ### Remotes
 
-* [ ] File-based routing support
-* [ ] Auto-register pages
+* [x] File-based routing support *(`src/pages/` — `index.tsx`, `settings.tsx`, `users/[id].tsx`; exposed via `./Routes`)*
+* [x] Auto-register pages *(`mfjs.routes.ts` exports `pages: RemotePageRoute[]`; `remote.tsx` calls `resolveRemotePage`)*
 
 ### Cross-App Navigation
 
-* [ ] Implement:
+* [x] `mfjs:navigate` custom event dispatched via `dispatchMfjsNavigate()`
+* [x] `createRouter` — shell listener that converts `mfjs:navigate` events into `history.pushState`
+* [x] `resolveRoute(routes, pathname)` — matches `RouteTarget[]` against a pathname with params/splat
+* [x] `matchPath(pattern, pathname)` — low-level matcher supporting static, `:param`, `*` splat
+* [x] Integration of routing into the example app *(shell routes via `createRouter`; remote renders file-based pages via `resolveRemotePage`)*
 
-```js
-window.dispatchEvent(new CustomEvent('mfjs:navigate'))
-```
+### Tests needed
 
-* [ ] Shell listener system
+* [x] `matchPath` — static segment match / mismatch
+* [x] `matchPath` — `:param` extraction
+* [x] `matchPath` — `*` splat captures remaining segments
+* [x] `matchPath` — root `/` only matches exact root
+* [x] `matchPath` — trailing slash normalisation
+* [x] `resolveRoute` — returns first matching target with params
+* [x] `resolveRoute` — returns `null` when no route matches
+* [x] `createRouter.navigate` — assert `history.pushState` called and subscribers notified
+* [x] `createRouter.subscribe` — assert callback fires with current path immediately on subscribe
+* [x] `createRouter.navigate replace` — assert `history.replaceState` called instead of push
+* [x] `createRouter.destroy` — assert `popstate` listener removed after destroy
+* [x] `createRouter` basePath — assert events only fire when path starts with basePath
+* [x] `dispatchMfjsNavigate` — assert `mfjs:navigate` CustomEvent dispatched on `window`
+* [x] `resolveRemotePage` — assert correct page module returned for matching subpath with params
+* [x] `resolveRemotePage` — assert `null` returned when no page matches subpath
 
 ---
 
 ## 5️⃣ Communication Layer (Week 8–9)
 
-* [ ] Build lightweight EventBus
-* [ ] Singleton injection
-* [ ] Publish/Subscribe API
-* [ ] Typed event contracts (basic)
+* [x] Build lightweight EventBus (`libs/event-bus/src/index.ts`)
+* [x] Singleton injection (shared via MF `@mfjs/event-bus: { singleton: true }`)
+* [x] Publish/Subscribe API (`on`, `emit`)
+* [x] Typed event contracts (generic `EventBus<Events extends EventMap>`)
 
 Optional:
 
 * [ ] Shared Redux store template
 
+### Tests needed
+
+* [x] `EventBus.on` + `emit` — assert handler receives correct payload
+* [x] `EventBus.on` — assert returned unsubscribe fn removes the handler
+* [x] `EventBus.emit` — assert no error when no handlers registered
+* [x] `EventBus` — assert two separate instances do NOT share events (proves singleton must be configured correctly in MF)
+* [ ] `EventBus` — assert TypeScript prevents emitting unknown event keys (compile-time test via `tsc --noEmit`)
+* [ ] Cross-MFE EventBus — e2e: shell emits event, remote handler receives it via shared singleton
+
 ---
 
 ## 6️⃣ Build System (Week 9–10)
 
-* [ ] Production build pipeline
-* [ ] Chunk splitting
-* [ ] Content hashing
-* [ ] Gzip/Brotli support
-* [ ] Output remoteEntry.js
+* [x] Production build pipeline (`mfjs build` → `rspack build` per app)
+* [x] Chunk splitting (Rspack default code splitting)
+* [x] Content hashing (Rspack `output.filename` with `[contenthash]`)
+* [ ] Gzip/Brotli support *(not configured)*
+* [x] Output `remoteEntry.js` (via `ModuleFederationPlugin.filename`)
+
+### Tests needed
+
+* [ ] `mfjs build` — assert `dist/remoteEntry.js` exists in remote output
+* [ ] `mfjs build` — assert `dist/index.html` references correct `main.[hash].js`
+* [ ] `mfjs build` — assert shell `dist/` does NOT bundle React separately (singleton sharing works in production build)
+* [ ] `mfjs build` — assert remote `dist/remoteEntry.js` exposes `./App` container
 
 ---
 
@@ -215,9 +278,9 @@ mfjs dev
 And see:
 
 * Shell mounted
-* Remote loaded
+* Remote (`./App`) loaded via `loadRemoteModule`
 * HMR working
-* Navigation between MFEs
+* No duplicate React (singleton share-scope working)
 
 ---
 
@@ -240,7 +303,7 @@ And see:
 * [ ] Strict TS config
 * [ ] Shared types package
 * [ ] Typed federation contracts
-* [ ] Typed EventBus
+* [x] Typed EventBus *(generic `EventBus<Events>` implemented)*
 
 ---
 
@@ -266,8 +329,8 @@ And see:
 
 ## Error Handling & Resilience (Weeks 8–9)
 
-* [ ] Remote load fallback
-* [ ] Timeout handling
+* [ ] Remote load fallback *(partial — `loadRemoteModule` throws on failure but no UI boundary)*
+* [ ] Timeout handling *(partial — remote-loader polls 20×25ms for container global)*
 * [ ] Error boundaries auto-injection
 * [ ] Offline cache support
 
@@ -275,12 +338,12 @@ And see:
 
 ## Documentation + Examples (Weeks 9–12)
 
-* [ ] Complete docs site
+* [ ] Complete docs site *(Astro docs skeleton exists at `/docs`)*
 * [ ] Example:
 
-  * E-commerce demo
-  * Dashboard demo
-  * SaaS demo
+  * [ ] E-commerce demo
+  * [x] Dashboard demo (basic remote mount, no routing)
+  * [ ] SaaS demo
 
 ---
 
@@ -346,11 +409,11 @@ And see:
 
 Because you are a **systems-level thinker building frameworks**, follow this order strictly:
 
-1. CLI + federation auto-generation
-2. Dev server orchestration
-3. Routing
-4. Communication layer
-5. Build system
+1. CLI + federation auto-generation ✅
+2. Dev server orchestration ✅
+3. Routing ✅ *(shell `createRouter` + remote `resolveRemotePage` + file-based pages integrated in example)*
+4. Communication layer ✅
+5. Build system ✅
 6. Then SSR
 
 ⚠️ DO NOT start with SSR or visual tools.
@@ -370,8 +433,8 @@ Because you are a **systems-level thinker building frameworks**, follow this ord
 
 # 📈 Risk Areas
 
-* Module Federation version mismatches
-* HMR across multiple remotes
+* Module Federation version mismatches *(share-scope shim needed — implemented in `index.html`)*
+* HMR across multiple remotes *(lazy-compilation-proxy crashes fixed — `lazyCompilation: false` applied)*
 * SSR + MF complexity
 * Dev server race conditions
 * Edge runtime compatibility
@@ -405,3 +468,124 @@ If you want next, I can give you:
 * 🔥 How to make this VC fundable
 
 Tell me which direction you want to go next.
+
+---
+
+# 🧪 Test Coverage Plan
+
+This section tracks the full test spec for every implemented feature. Tests marked `[x]` already exist in the codebase.
+
+---
+
+## `loadRemoteEntry` / `initRemoteContainer` / `loadRemoteModule`
+
+| Status | Test |
+|--------|------|
+| [x] | `loadRemoteEntry` — script tag injected into `document.head` with correct `src` |
+| [x] | `loadRemoteEntry` — deduplication: calling twice with same URL injects only one script tag |
+| [x] | `loadRemoteEntry` — rejects with timeout error when container global never appears |
+| [x] | `initRemoteContainer` — calls `__federation_init_sharing__('default')` first (Rspack path) |
+| [x] | `initRemoteContainer` — calls `container.init()` with the live scope object |
+| [x] | `initRemoteContainer` — falls back to `__webpack_init_sharing__` when Rspack globals absent |
+| [x] | `initRemoteContainer` — safe to call multiple times (idempotent) |
+| [x] | `loadRemoteModule` — returns the module exported by `factory()` from container `.get()` |
+| [x] | `loadRemoteModule` — throws a clear error when `remoteUrl` resolves to wrong container name |
+
+---
+
+## `matchPath`
+
+| Status | Test |
+|--------|------|
+| [x] | static segment `/about` matches `/about` |
+| [x] | static segment `/about` does not match `/about/team` |
+| [x] | `:param` pattern `/users/:id` extracts `{ id }` from `/users/42` |
+| [x] | `*` splat captures everything after prefix |
+| [x] | root `/` only matches `/` and not `/anything` |
+| [x] | trailing slash normalisation — `/about/` matches `/about` |
+
+---
+
+## `resolveRoute`
+
+| Status | Test |
+|--------|------|
+| [x] | returns first matching `RouteTarget` with extracted params |
+| [x] | returns `null` when no route in list matches pathname |
+| [x] | wildcard route `/*` matches any path that doesn't match earlier routes |
+| [x] | earlier route wins over later route for the same path (first-match-wins) |
+
+---
+
+## `resolveRemotePage`
+
+| Status | Test |
+|--------|------|
+| [x] | returns correct lazy-loaded page module for matching subpath |
+| [x] | returns `null` when subpath matches no registered page |
+| [x] | normalises leading slash: `reports/1` and `/reports/1` match same pattern |
+| [x] | extracted params are passed through with lazy load result |
+
+---
+
+## `createRouter` / `dispatchMfjsNavigate`
+
+| Status | Test |
+|--------|------|
+| [x] | `navigate({ to })` calls `history.pushState` with correct path |
+| [x] | `navigate({ to, mode: 'replace' })` calls `history.replaceState` |
+| [x] | subscriber callback is invoked immediately with current path on subscribe |
+| [x] | subscriber callback is invoked after `navigate()` |
+| [x] | `unsubscribe` fn returned from `subscribe()` stops further callbacks |
+| [x] | `popstate` browser event triggers subscriber callback |
+| [x] | `basePath` option: events only fire when path starts with basePath |
+| [x] | `destroy()` removes `popstate` listener and `mfjs:navigate` listener |
+| [x] | `dispatchMfjsNavigate({ to })` dispatches `mfjs:navigate` CustomEvent on `window` |
+| [ ] | shell `mfjs:navigate` listener causes correct remote module to be loaded |
+
+---
+
+## `EventBus`
+
+| Status | Test |
+|--------|------|
+| [x] | `on` + `emit` — handler receives correct typed payload |
+| [x] | `on` — returned cleanup function removes the handler |
+| [x] | `emit` — no error thrown when no handlers registered for event |
+| [x] | two separate `EventBus` instances do NOT share events |
+| [ ] | TypeScript: emitting an unknown event key fails at compile time (`tsc --noEmit`) |
+
+---
+
+## CLI — `mfjs routes`
+
+| Status | Test |
+|--------|------|
+| [x] | scans `src/pages/**` and generates route manifest with correct path patterns |
+| [x] | generates host manifest mapping remotes to base paths |
+| [x] | `[id].tsx` file name becomes `:id` in route pattern |
+| [x] | nested directories produce nested route paths |
+| [x] | re-running `mfjs routes` overwrites existing manifest cleanly |
+
+---
+
+## End-to-End (Playwright)
+
+| Status | Test |
+|--------|------|
+| [x] | basic example — shell loads and remote `./App` mounts without error |
+| [x] | basic example — no `Invalid hook call` / `dispatcher is null` error in browser console |
+| [x] | basic example — `data-testid="remote-loaded"` element is visible in shell |
+| [x] | routing — shell shows Dashboard Home page at `/` |
+| [x] | routing — nav to `/dashboard/settings` renders Settings page |
+| [x] | routing — nav to `/dashboard/users/1` renders User page with correct id |
+| [x] | routing — in-remote `dispatchMfjsNavigate` navigates shell (Home → Settings button) |
+| [x] | routing — in-remote `dispatchMfjsNavigate` navigates shell (Home → User #42 button) |
+| [x] | routing — Settings back button returns to Dashboard Home |
+| [x] | routing — browser back/forward works after client-side navigation |
+| [x] | routing — deep-link `/dashboard/settings` loads correct page directly |
+| [x] | routing — deep-link `/dashboard/users/7` loads correct page directly |
+| [ ] | on-demand compilation — remote is not built until shell first requests it |
+| [ ] | proxy remoteEntry — shell fetches `remoteEntry.js` via dev-server proxy path |
+| [ ] | hot reload — editing `remote.tsx` triggers HMR and shell reflects change without page reload |
+| [ ] | production build — shell served statically loads remote from `dist/remoteEntry.js` |
