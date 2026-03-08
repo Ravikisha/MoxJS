@@ -53,6 +53,8 @@ function matchPattern(pattern: string, pathname: string): Record<string, string>
     const ps = pSegs[i];
     const us = uSegs[j];
 
+    if (ps === undefined) return null;
+
     if (ps === '*') {
       params['*'] = uSegs.slice(j).join('/');
       return params;

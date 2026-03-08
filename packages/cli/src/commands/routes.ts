@@ -64,6 +64,7 @@ function routeFromPageFile(relFromPages: string) {
   const out: string[] = [];
   for (let i = 0; i < segs.length; i++) {
     const s = segs[i];
+    if (s === undefined) continue;
     if (s === 'index' && i === segs.length - 1) continue;
 
     const mCatchAll = s.match(/^\[\.\.\.(.+)\]$/);

@@ -166,7 +166,7 @@ export const federationCommand = new Command('federation')
       const cfg: FederationConfig = {
         name: toFederationName(detectedName),
         filename: 'remoteEntry.js',
-        exposes,
+        ...(exposes !== undefined ? { exposes } : {}),
         shared
       };
 

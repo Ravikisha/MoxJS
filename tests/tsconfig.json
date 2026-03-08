@@ -1,0 +1,24 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "typeRoots": [
+      "../packages/cli/node_modules/@types",
+      "../node_modules/@types"
+    ],
+    "paths": {
+      "@mfjs/types": ["../libs/types/src/index.ts"],
+      "@mfjs/runtime": ["../libs/runtime/src/index.ts"],
+      "@mfjs/event-bus": ["../libs/event-bus/src/index.ts"],
+      "@mfjs/ssr": ["../libs/ssr/src/index.ts"]
+    }
+  },
+  "include": ["e2e/**/*.ts"],
+  "exclude": ["node_modules"]
+}

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/tsconfig",
+  "compilerOptions": {
+    // ── Language & output ────────────────────────────────────────────────────
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
+
+    // ── Strict mode (full suite) ─────────────────────────────────────────────
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitOverride": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "forceConsistentCasingInFileNames": true,
+
+    // ── Interop ──────────────────────────────────────────────────────────────
+    "esModuleInterop": true,
+    "skipLibCheck": true
+  }
+}

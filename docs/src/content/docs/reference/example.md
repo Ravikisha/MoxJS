@@ -732,3 +732,116 @@ Updates the singleton server router's current path and notifies subscribers.
 ```ts
 function setServerPath(path: string): void
 ```
+
+---
+
+## `@mfjs/types`
+
+Zero-runtime shared type library. All exports except `defineFederationContract` and
+`validateFederationContract` are type-only and emit no JavaScript.
+
+### App config
+
+```ts
+import type { AppType, MfjsAppConfig } from '@mfjs/types';
+```
+
+| Export | Kind | Description |
+|---|---|---|
+| `AppType` | `type` | `'host' \| 'remote'` |
+| `MfjsAppConfig` | `type` | Full app config (name, type, port, exposes?, shared?). |
+
+### Federation config
+
+```ts
+import type { FederationConfig, SharedDependency, RemoteTarget } from '@mfjs/types';
+```
+
+| Export | Kind | Description |
+|---|---|---|
+| `FederationConfig` | `type` | Module Federation plugin config shape. |
+| `SharedDependency` | `type` | Per-package sharing options (singleton, eager, requiredVersion?). |
+| `RemoteTarget` | `type` | `{ name: string; entryUrl: string }` — runtime remote descriptor. |
+
+### Federation contracts
+
+```ts
+import {
+  defineFederationContract,
+  validateFederationContract,
+} from '@mfjs/types';
+import type {
+  FederationContract,
+  ExposesMap,
+  EventContract,
+  ContractViolation,
+  InferExposed,
+  InferEmits,
+  InferListens,
+} from '@mfjs/types';
+```
+
+#### `defineFederationContract<T>(contract: T): T`
+
+Identity helper that preserves the full literal type of the contract object, including exact
+literal tuple types of `events.emits` and `events.listens`.
+
+```ts
+const contract = defineFederationContract({
+  name: 'dashboard',
+  exposes: { './App': null as unknown as React.ComponentType },
+  events: {
+    emits:   ['dashboard:action'] as const,
+    listens: ['shell:ready']      as const,
+  },
+});
+```
+
+#### `validateFederationContract(contract, container): ContractViolation[]`
+
+Runtime check that a loaded Module Federation container satisfies the contract.
+Returns an empty array when valid; returns one or more `ContractViolation` objects on failure.
+
+```ts
+function validateFederationContract(
+  contract: FederationContract,
+  container: { get: (key: string) => Promise<() => unknown> } | undefined | null
+): ContractViolation[]
+```
+
+#### `InferExposed<C, K>`
+
+Extracts the type of the module exposed at key `K` from contract `C`.
+
+```ts
+type AppComponent = InferExposed<typeof contract, './App'>;
+```
+
+#### `InferEmits<C>`
+
+Union of event keys emitted by contract `C`.
+
+```ts
+type Emitted = InferEmits<typeof contract>; // 'dashboard:action'
+```
+
+#### `InferListens<C>`
+
+Union of event keys listened to by contract `C`.
+
+```ts
+type Listened = InferListens<typeof contract>; // 'shell:ready'
+```
+
+### Routing types
+
+```ts
+import type { RouteTarget, RouteMatch, NavigateMode, NavigateDetail } from '@mfjs/types';
+```
+
+| Export | Kind | Description |
+|---|---|---|
+| `RouteTarget` | `type` | `{ path, remote, expose? }` — a route and its remote. |
+| `RouteMatch<T>` | `type` | `{ target: T, params }` — result of a route match. |
+| `NavigateMode` | `type` | `'push' \| 'replace'` |
+| `NavigateDetail` | `type` | Payload for the `mfjs:navigate` DOM custom event. |

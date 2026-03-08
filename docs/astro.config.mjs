@@ -16,6 +16,7 @@ export default defineConfig({
 						{ label: 'Routing', slug: 'guides/routing' },
 						{ label: 'EventBus & Shared State', slug: 'guides/event-bus' },
 						{ label: 'SSR & Static Export', slug: 'guides/ssr' },
+						{ label: 'TypeScript Integration', slug: 'guides/typescript' },
 						{ label: 'CLI', slug: 'guides/cli' },
 						{ label: 'Example', slug: 'guides/example' },
 					],

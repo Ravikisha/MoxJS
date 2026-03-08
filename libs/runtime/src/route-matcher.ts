@@ -26,6 +26,10 @@ export function matchPath(pattern: string, pathname: string): RouteMatch | null 
     const ps = pSegs[i];
     const us = uSegs[j];
 
+    // noUncheckedIndexedAccess: both `ps` and `us` can be `undefined` when the
+    // index is out of bounds, even though we bound by `pSegs.length` above.
+    if (ps === undefined) return null;
+
     if (ps === '*') {
       params['*'] = uSegs.slice(j).join('/');
       return { params };

@@ -41,6 +41,7 @@ async function scaffoldReactRspackApp(appDir: string, name: string, port: number
     scripts: {
       dev: 'rspack serve',
       build: 'rspack build',
+      typecheck: 'tsc --noEmit',
       test: 'vitest run'
     },
     dependencies: {
@@ -63,14 +64,10 @@ async function scaffoldReactRspackApp(appDir: string, name: string, port: number
   });
 
   await writeJson(path.join(appDir, 'tsconfig.json'), {
+    extends: '../../tsconfig.base.json',
     compilerOptions: {
-      target: 'ES2022',
       lib: ['ES2022', 'DOM', 'DOM.Iterable'],
-      module: 'ES2022',
-      moduleResolution: 'Bundler',
-      strict: true,
       jsx: 'react-jsx',
-      skipLibCheck: true,
       allowImportingTsExtensions: true,
       noEmit: true,
       types: []

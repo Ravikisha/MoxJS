@@ -40,6 +40,7 @@ try {
   children.push(run('pnpm', ['-C', new URL('../libs/event-bus/', import.meta.url).pathname, 'build'], process.cwd()));
   children.push(run('pnpm', ['-C', new URL('../libs/events/', import.meta.url).pathname, 'build'], process.cwd()));
   children.push(run('pnpm', ['-C', new URL('../libs/state/', import.meta.url).pathname, 'build'], process.cwd()));
+  children.push(run('pnpm', ['-C', new URL('../libs/types/', import.meta.url).pathname, 'build'], process.cwd()));
 
   // Ensure federation configs exist.
   children.push(run('pnpm', ['-C', exampleDir, 'federation'], process.cwd()));

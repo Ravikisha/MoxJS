@@ -300,9 +300,9 @@ And see:
 
 ## TypeScript Integration (Week 2–3)
 
-* [ ] Strict TS config
-* [ ] Shared types package
-* [ ] Typed federation contracts
+* [x] Strict TS config — `tsconfig.base.json` at monorepo root; all packages extend it; 7 strict flags beyond `strict: true`
+* [x] Shared types package — `@mfjs/types` (zero-runtime): app config, federation config, federation contracts, routing types
+* [x] Typed federation contracts — `defineFederationContract`, `InferExposed/Emits/Listens`, `validateFederationContract`, `mfjs typecheck` CLI command
 * [x] Typed EventBus *(generic `EventBus<Events>` implemented)*
 
 ---
