@@ -17,6 +17,7 @@ export default defineConfig({
 						{ label: 'EventBus & Shared State', slug: 'guides/event-bus' },
 						{ label: 'SSR & Static Export', slug: 'guides/ssr' },
 						{ label: 'TypeScript Integration', slug: 'guides/typescript' },
+						{ label: 'CI/CD Automation', slug: 'guides/ci-cd' },
 						{ label: 'CLI', slug: 'guides/cli' },
 						{ label: 'Example', slug: 'guides/example' },
 					],

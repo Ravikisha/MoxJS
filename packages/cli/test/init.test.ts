@@ -83,4 +83,89 @@ describe('mfjs init', () => {
     await expect(run('empty-dir', tmp)).resolves.not.toThrow();
     expect(await fs.pathExists(path.join(target, 'package.json'))).toBe(true);
   });
+
+  // ── New: CI/CD + TS scaffolding ─────────────────────────────────────────────
+
+  it('package.json includes typecheck and ci:affected scripts', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const pkg = await fs.readJson(path.join(tmp, 'my-app', 'package.json'));
+    expect(pkg.scripts.typecheck).toBeDefined();
+    expect(pkg.scripts['ci:affected']).toBeDefined();
+  });
+
+  it('writes tsconfig.base.json with strict and noUncheckedIndexedAccess', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const cfg = await fs.readJson(path.join(tmp, 'my-app', 'tsconfig.base.json'));
+    expect(cfg.compilerOptions.strict).toBe(true);
+    expect(cfg.compilerOptions.noUncheckedIndexedAccess).toBe(true);
+    expect(cfg.compilerOptions.exactOptionalPropertyTypes).toBe(true);
+  });
+
+  it('writes a .gitignore that ignores node_modules and dist', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const gi = await fs.readFile(path.join(tmp, 'my-app', '.gitignore'), 'utf8');
+    expect(gi).toContain('node_modules');
+    expect(gi).toContain('dist');
+  });
+
+  it('scaffolds .github/workflows/ci.yml', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const exists = await fs.pathExists(
+      path.join(tmp, 'my-app', '.github', 'workflows', 'ci.yml')
+    );
+    expect(exists).toBe(true);
+  });
+
+  it('scaffolds .github/workflows/pr-preview.yml', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const exists = await fs.pathExists(
+      path.join(tmp, 'my-app', '.github', 'workflows', 'pr-preview.yml')
+    );
+    expect(exists).toBe(true);
+  });
+
+  it('scaffolds .github/workflows/deploy.yml', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const exists = await fs.pathExists(
+      path.join(tmp, 'my-app', '.github', 'workflows', 'deploy.yml')
+    );
+    expect(exists).toBe(true);
+  });
+
+  it('ci.yml contains mfjs typecheck step', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const yml = await fs.readFile(
+      path.join(tmp, 'my-app', '.github', 'workflows', 'ci.yml'),
+      'utf8'
+    );
+    expect(yml).toContain('mfjs typecheck');
+  });
+
+  it('ci.yml contains mfjs ci affected step', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const yml = await fs.readFile(
+      path.join(tmp, 'my-app', '.github', 'workflows', 'ci.yml'),
+      'utf8'
+    );
+    expect(yml).toContain('mfjs ci affected');
+  });
+
+  it('deploy.yml is a netlify deployment by default', async () => {
+    const tmp = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-init-'))) as string;
+    await run('my-app', tmp);
+    const yml = await fs.readFile(
+      path.join(tmp, 'my-app', '.github', 'workflows', 'deploy.yml'),
+      'utf8'
+    );
+    expect(yml).toContain('nwtgck/actions-netlify');
+  });
 });
+

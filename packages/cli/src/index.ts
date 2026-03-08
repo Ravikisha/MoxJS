@@ -9,6 +9,7 @@ import { federationCommand } from './commands/federation.js';
 import { routesCommand } from './commands/routes.js';
 import { ssrCommand } from './commands/ssr.js';
 import { typecheckCommand } from './commands/typecheck.js';
+import { ciCommand } from './commands/ci.js';
 
 const program = new Command();
 
@@ -25,6 +26,7 @@ program.addCommand(federationCommand);
 program.addCommand(routesCommand);
 program.addCommand(ssrCommand);
 program.addCommand(typecheckCommand);
+program.addCommand(ciCommand);
 
 program.showHelpAfterError();
 

@@ -309,11 +309,11 @@ And see:
 
 ## CI/CD Automation (Weeks 4–6)
 
-* [ ] Generate GitHub Actions template
-* [ ] Affected builds detection
-* [ ] Parallel remote builds
-* [ ] CDN deployment example
-* [ ] PR preview deployment template
+* [x] Generate GitHub Actions template — `mfjs ci generate` scaffolds `ci.yml`, `pr-preview.yml`, `deploy.yml`
+* [x] Affected builds detection — `mfjs ci affected [--base <ref>] [--head <ref>] [--format json]`
+* [x] Parallel remote builds — `ci.yml` build job uses affected detection + `mfjs build` per app
+* [x] CDN deployment example — `buildDeployWorkflow` supports `netlify` / `s3`+CloudFront / `azure`
+* [x] PR preview deployment template — `mfjs ci preview` scaffolds `pr-preview.yml` with Netlify + GitHub PR comment
 
 ---
 

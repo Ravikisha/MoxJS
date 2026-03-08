@@ -845,3 +845,101 @@ import type { RouteTarget, RouteMatch, NavigateMode, NavigateDetail } from '@mfj
 | `RouteMatch<T>` | `type` | `{ target: T, params }` — result of a route match. |
 | `NavigateMode` | `type` | `'push' \| 'replace'` |
 | `NavigateDetail` | `type` | Payload for the `mfjs:navigate` DOM custom event. |
+
+---
+
+## `mfjs ci` — CI/CD Commands
+
+The `mfjs ci` command family generates GitHub Actions workflow files and detects affected apps in a monorepo.
+
+---
+
+### `mfjs ci generate`
+
+```
+mfjs ci generate [options]
+```
+
+Generates `.github/workflows/ci.yml`, optionally `pr-preview.yml`, and optionally `deploy.yml`.
+
+| Option | Default | Description |
+|---|---|---|
+| `--dir <path>` | `.` | Target output directory |
+| `--node <version>` | `22` | Node.js version string |
+| `--package-manager <pm>` | `pnpm` | Package manager (`pnpm`, `npm`, `yarn`) |
+| `--deploy-target <target>` | `netlify` | Deploy target: `netlify`, `s3`, or `azure` |
+| `--no-preview` | — | Omit `pr-preview.yml` |
+| `--no-deploy` | — | Omit `deploy.yml` |
+
+---
+
+### `mfjs ci affected`
+
+```
+mfjs ci affected [options]
+```
+
+Detects which apps were changed between two Git refs by inspecting paths inside `apps/` and `packages/`. Changes under `packages/` cause all apps to be marked affected.
+
+| Option | Default | Description |
+|---|---|---|
+| `--dir <path>` | `.` | Workspace root |
+| `--base <ref>` | `HEAD~1` | Base Git ref |
+| `--head <ref>` | `HEAD` | Head Git ref |
+| `--format <fmt>` | `text` | `text` (newline list) or `json` (JSON array) |
+
+**Output examples:**
+
+```bash
+# text format (default)
+$ mfjs ci affected
+shell
+dashboard
+
+# json format — useful with fromJSON() in GitHub Actions matrices
+$ mfjs ci affected --format json
+["shell","dashboard"]
+```
+
+---
+
+### `mfjs ci preview`
+
+```
+mfjs ci preview [options]
+```
+
+Generates only the `pr-preview.yml` workflow file. Equivalent to `mfjs ci generate --no-deploy`.
+
+| Option | Default | Description |
+|---|---|---|
+| `--dir <path>` | `.` | Output directory |
+| `--node <version>` | `22` | Node.js version |
+| `--package-manager <pm>` | `pnpm` | Package manager |
+
+---
+
+### Template builder functions
+
+The template functions are exported from `@mfjs/cli` for use in custom tooling:
+
+```ts
+import {
+  buildCiWorkflow,
+  buildPreviewWorkflow,
+  buildDeployWorkflow,
+} from '@mfjs/cli/commands/ci';
+
+// Generate ci.yml content
+const ciYml = buildCiWorkflow({ nodeVersion: '22', packageManager: 'pnpm' });
+
+// Generate pr-preview.yml content
+const previewYml = buildPreviewWorkflow({ nodeVersion: '22', packageManager: 'pnpm' });
+
+// Generate deploy.yml content (netlify | s3 | azure)
+const deployYml = buildDeployWorkflow({
+  nodeVersion: '22',
+  packageManager: 'pnpm',
+  target: 'netlify',
+});
+```
