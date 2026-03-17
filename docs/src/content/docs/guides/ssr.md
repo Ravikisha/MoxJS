@@ -129,6 +129,23 @@ createServer((req, res) => {
 }).listen(3000);
 ```
 
+---
+
+## 6 — `mfjs ssr serve` (reference server)
+
+MFJS ships a small reference SSR server mainly for **local testing** and quick prototypes.
+
+- It reads `mfjs.ssr.json` from your workspace.
+- It supports **streaming SSR by default** (React 18 `renderToPipeableStream`).
+- Use `--no-stream` to force string rendering.
+
+```bash
+mfjs ssr serve --dir . --port 3000
+mfjs ssr serve --dir . --port 3000 --no-stream
+```
+
+For production, you’ll usually embed `@mfjs/ssr` into your own server (Express/Fastify/Hono/etc.), so you can add caching, headers, auth, and asset handling.
+
 ### `renderRouteToStream(App, route)`
 
 ```ts

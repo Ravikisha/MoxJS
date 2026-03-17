@@ -9,13 +9,15 @@ import { describe, it, expect, afterEach } from 'vitest';
 import os from 'node:os';
 import path from 'node:path';
 import fs from 'fs-extra';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const tmpDirs: string[] = [];
 
 async function makeTmp(): Promise<string> {
-  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-ssr-cli-'));
+  const dir = (await fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-ssr-cli-'))) as unknown as string;
   tmpDirs.push(dir);
   return dir;
 }
@@ -25,6 +27,99 @@ afterEach(async () => {
     await fs.remove(d);
   }
 });
+
+function runNode(args: string[], opts: { cwd: string }): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, args, {
+      cwd: opts.cwd,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, NODE_ENV: 'test' },
+    });
+
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (d) => (stdout += d.toString('utf8')));
+    child.stderr.on('data', (d) => (stderr += d.toString('utf8')));
+    child.on('close', (code) => resolve({ code: code ?? 0, stdout, stderr }));
+  });
+}
+
+async function runMfjsCli(
+  tmpWorkspace: string,
+  cliArgs: string[]
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  const runnerPath = path.join(tmpWorkspace, 'run-mfjs-cli.mjs');
+  const cliEntry = path.resolve(__dirname, '../dist/index.js');
+
+  await fs.writeFile(
+    runnerPath,
+    [
+      "import { spawn } from 'node:child_process';",
+      "import { fileURLToPath } from 'node:url';",
+      '',
+      `const cli = ${JSON.stringify(cliEntry)};`,
+      `const args = ${JSON.stringify(cliArgs)};`,
+      "const child = spawn(process.execPath, [cli, ...args], { stdio: 'inherit' });",
+      "child.on('close', (code) => process.exit(code ?? 0));",
+      "child.on('error', (err) => { console.error(err); process.exit(1); });",
+      '',
+      "void fileURLToPath;",
+    ].join('\n'),
+    'utf8'
+  );
+
+  return runNode([runnerPath], { cwd: tmpWorkspace });
+}
+
+async function writeTinyWorkspace(tmp: string) {
+  await fs.writeJson(
+    path.join(tmp, 'package.json'),
+    { name: 'tmp-ssr-workspace', private: true, type: 'module' },
+    { spaces: 2 }
+  );
+
+  // Minimal SSR app module.
+  await fs.ensureDir(path.join(tmp, 'src'));
+  await fs.writeFile(
+    path.join(tmp, 'src', 'App.mjs'),
+    [
+  'export default function App({ path, params }) {',
+  "  return `<main data-testid=\"ssr-app\" data-path=\"${path}\">${params?.id ?? ''}</main>`;",
+  '}',
+      '',
+    ].join('\n'),
+    'utf8'
+  );
+
+  // Template.
+  await fs.writeFile(
+    path.join(tmp, 'index.html'),
+    '<!doctype html><html><body><div id="root"><!--ssr-outlet--></div></body></html>',
+    'utf8'
+  );
+
+  // SSR config.
+  await fs.writeJson(
+    path.join(tmp, 'mfjs.ssr.json'),
+    {
+      app: './src/App.mjs',
+      template: './index.html',
+      routes: [{ path: '/' }, { path: '/users/:id', params: { id: '42' } }],
+      outDir: 'dist-static',
+      port: 0,
+    },
+    { spaces: 2 }
+  );
+
+  // Provide node_modules so ESM can resolve deps from the temp workspace.
+  // pnpm's node_modules layout uses virtual store symlinks; linking individual
+  // packages is brittle. Linking the whole tree is reliable and still fast.
+  const repoRoot = path.resolve(__dirname, '..', '..', '..');
+  const repoNodeModules = path.join(repoRoot, 'node_modules');
+  const tmpNodeModules = path.join(tmp, 'node_modules');
+  await fs.remove(tmpNodeModules).catch(() => {});
+  await fs.symlink(repoNodeModules, tmpNodeModules);
+}
 
 // ── mfjs.ssr.json validation ─────────────────────────────────────────────────
 
@@ -147,4 +242,27 @@ describe('mfjs ssr serve — Node.js http server', () => {
 
     await done;
   });
+});
+
+describe('mfjs ssr — integration', () => {
+  it('`mfjs ssr export` writes pages to outDir', async () => {
+    const tmp = await makeTmp();
+    await writeTinyWorkspace(tmp);
+
+  const { code, stdout, stderr } = await runMfjsCli(tmp, ['ssr', 'export', '--dir', tmp]);
+
+    if (code !== 0) {
+      throw new Error(`mfjs ssr export failed (code ${code}).\nSTDOUT:\n${stdout}\nSTDERR:\n${stderr}`);
+    }
+    expect(stdout + stderr).toMatch(/Static export complete/);
+
+    const indexHtml = await fs.readFile(path.join(tmp, 'dist-static', 'index.html'), 'utf8');
+    expect(indexHtml).toContain('data-testid="ssr-app"');
+    expect(indexHtml).toContain('data-path="/"');
+  });
+
+  // Note: we intentionally don't start a real HTTP server in unit tests because it can be
+  // flaky (port binding, timing, signal handling in CI). The SSR server logic is covered
+  // by @mfjs/ssr tests for string/stream rendering, and this integration suite verifies
+  // that the CLI can load an app module + run static export deterministically.
 });

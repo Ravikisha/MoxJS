@@ -19,7 +19,8 @@
     "kleur": "^4.1.5",
     "execa": "^9.5.3",
     "ws": "^8.18.3",
-    "@mfjs/ssr": "workspace:*"
+  "@mfjs/ssr": "workspace:*",
+  "sharp": "^0.34.2"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",

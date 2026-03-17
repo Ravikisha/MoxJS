@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'fs-extra';
 
-import { analyzeDist, evaluateBudgets } from '../src/commands/perf.js';
+import { analyzeDist, evaluateBudgets, summarizeBudgets } from '../src/commands/perf.js';
 
 async function tmp() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-perf-')) as Promise<string>;
@@ -47,5 +47,18 @@ describe('evaluateBudgets', () => {
   it('treats files with no matching rule as ok', () => {
     const res = evaluateBudgets([{ file: 'x.js', bytes: 999 }], { budgets: [] });
     expect(res[0].status).toBe('ok');
+  });
+});
+
+describe('summarizeBudgets', () => {
+  it('counts ok/warn/error results', () => {
+    const summary = summarizeBudgets([
+      { file: 'a.js', bytes: 1, status: 'ok' },
+      { file: 'b.js', bytes: 2, status: 'warn' },
+      { file: 'c.js', bytes: 3, status: 'warn' },
+      { file: 'd.js', bytes: 4, status: 'error' },
+    ]);
+
+    expect(summary).toEqual({ ok: 1, warn: 2, error: 1 });
   });
 });

@@ -11,6 +11,8 @@ import { ssrCommand } from './commands/ssr.js';
 import { typecheckCommand } from './commands/typecheck.js';
 import { ciCommand } from './commands/ci.js';
 import { perfCommand } from './commands/perf.js';
+import { lazyCommand } from './commands/lazy.js';
+import { imageCommand } from './commands/image.js';
 
 const program = new Command();
 
@@ -29,6 +31,8 @@ program.addCommand(ssrCommand);
 program.addCommand(typecheckCommand);
 program.addCommand(ciCommand);
 program.addCommand(perfCommand);
+program.addCommand(lazyCommand);
+program.addCommand(imageCommand);
 
 program.showHelpAfterError();
 

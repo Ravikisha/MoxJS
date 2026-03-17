@@ -1,0 +1,12 @@
+{
+  "template": "./ssr/template.html",
+  "outDir": "./dist-ssg",
+  "stream": true,
+  "routes": [
+    { "path": "/" },
+    { "path": "/pricing" },
+    { "path": "/app" },
+    { "path": "/app/settings" }
+  ],
+  "app": "./ssr/app.mjs"
+}

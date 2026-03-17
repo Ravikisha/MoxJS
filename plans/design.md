@@ -299,11 +299,11 @@ And see:
 
 ## SSR / SSG (Weeks 1–4)
 
-* [ ] Server rendering host
-* [ ] Remote SSR compatibility
-* [ ] Streaming SSR
-* [ ] Static export support
-* [ ] Edge adapter interface
+* [x] Server rendering host
+* [x] Remote SSR compatibility
+* [x] Streaming SSR
+* [x] Static export support
+* [x] Edge adapter interface
 
 ---
 
@@ -328,11 +328,11 @@ And see:
 
 ## Performance System (Weeks 6–8)
 
-* [ ] Bundle size analyzer
-* [ ] Performance budgets
-* [ ] Warning system
-* [ ] Lazy loading enforcement
-* [ ] Image optimization plugin
+* [x] Bundle size analyzer (`mfjs perf analyze`)
+* [x] Performance budgets (`mfjs perf analyze --budgets <path>` with warn/error thresholds)
+* [x] Warning system *(budget summary + `--fail-on-warn` for CI behavior)*
+* [x] Lazy loading enforcement *(CLI lint: `mfjs lazy check` scans dist bundles for eager-remote patterns; warn/error in CI)*
+* [x] Image optimization plugin *(CLI: `mfjs image optimize` — generate webp/avif + responsive widths from dist output)*
 
 ---
 
@@ -347,7 +347,7 @@ And see:
 
 ## Documentation + Examples (Weeks 9–12)
 
-* [ ] Complete docs site *(Astro docs skeleton exists at `/docs`)*
+* [x] Complete docs site *(Astro/Starlight docs with guides + CLI + runtime API reference)*
 * [ ] Example:
 
   * [ ] E-commerce demo

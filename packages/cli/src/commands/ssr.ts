@@ -13,6 +13,7 @@ import kleur from 'kleur';
 import http from 'node:http';
 import { createRequire } from 'node:module';
 
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function loadSsrConfig(workspaceDir: string): Promise<SsrConfig | null> {
@@ -36,6 +37,23 @@ type SsrConfig = {
   /** Dev server port for `mfjs ssr serve`. */
   port?: number;
 };
+
+function withWorkspaceNodePath<T>(workspaceDir: string, fn: () => Promise<T>): Promise<T> {
+  const prev = process.env['NODE_PATH'];
+  // Ensure Node can resolve dependencies for dynamically-imported app modules.
+  // This matters when a user runs `mfjs ssr` from outside the workspace root.
+  process.env['NODE_PATH'] = [path.join(workspaceDir, 'node_modules'), prev]
+    .filter(Boolean)
+    .join(path.delimiter);
+  const cjs = createRequire(import.meta.url);
+  // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+  cjs('module').Module._initPaths();
+  return fn().finally(() => {
+  process.env['NODE_PATH'] = prev;
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
+    cjs('module').Module._initPaths();
+  });
+}
 
 // ── `mfjs ssr export` ─────────────────────────────────────────────────────────
 
@@ -79,13 +97,15 @@ const exportCommand = new Command('export')
 
     console.log(kleur.cyan(`Pre-rendering ${config.routes.length} route(s) → ${outDir}`));
 
+    const req = createRequire(path.join(workspaceDir, 'package.json'));
     let App: any;
     try {
-      const appMod = await import(appModulePath);
-      App = appMod.default ?? appMod.App;
-      if (!App) {
-        throw new Error(`App module at ${appModulePath} has no default export.`);
-      }
+      await withWorkspaceNodePath(workspaceDir, async () => {
+        // Use require() to resolve relative to the workspace.
+        const appMod = req(appModulePath);
+        App = appMod.default ?? appMod.App;
+      });
+      if (!App) throw new Error(`App module at ${appModulePath} has no default export.`);
     } catch (e) {
       console.error(kleur.red(`Failed to load App module: ${e instanceof Error ? e.message : e}`));
       process.exitCode = 1;
@@ -93,21 +113,35 @@ const exportCommand = new Command('export')
     }
 
     let staticExport: (opts: any) => Promise<any>;
+    let injectIntoTemplate: ((template: string, html: string) => string) | null = null;
     try {
       const ssrMod = await import('@mfjs/ssr');
       staticExport = ssrMod.staticExport;
+      injectIntoTemplate = typeof ssrMod.injectIntoTemplate === 'function' ? ssrMod.injectIntoTemplate : null;
     } catch (e) {
       console.error(kleur.red('@mfjs/ssr not found. Install it: pnpm add -D @mfjs/ssr'));
       process.exitCode = 1;
       return;
     }
 
-    const pages = await staticExport({
-      routes: config.routes,
-      App,
-      template,
-      outDir,
-    });
+    const isStringApp = typeof App === 'function' && typeof App({ path: '/', params: {} }) === 'string';
+
+    const pages = isStringApp
+      ? await Promise.all(
+          config.routes.map(async (route) => {
+            const html = await Promise.resolve(App({ path: route.path, params: route.params ?? {} }));
+            const content = (injectIntoTemplate ?? ((t: string, h: string) => t.replace('<!--ssr-outlet-->', h)))(
+              template,
+              html
+            );
+            const file = route.path === '/' ? 'index.html' : `${route.path.replace(/^\//, '').replace(/\/$/, '')}/index.html`;
+            const outPath = path.join(outDir, file);
+            await fs.ensureDir(path.dirname(outPath));
+            await fs.writeFile(outPath, content, 'utf8');
+            return { file, content };
+          })
+        )
+      : await staticExport({ routes: config.routes, App, template, outDir });
 
     for (const page of pages) {
       console.log(kleur.green(`  ✓ ${page.file}`));
@@ -122,8 +156,10 @@ const serveCommand = new Command('serve')
   .description('Start a Node.js SSR server for the host app')
   .option('-d, --dir <path>', 'Workspace root directory', process.cwd())
   .option('-p, --port <port>', 'Port to listen on (overrides mfjs.ssr.json)', '3000')
+  .option('--stream', 'Use React 18 streaming SSR when available (recommended)', true)
+  .option('--no-stream', 'Disable streaming SSR and render to string')
   .option('-c, --config <path>', 'Path to mfjs.ssr.json')
-  .action(async (opts: { dir: string; port: string; config?: string }) => {
+  .action(async (opts: { dir: string; port: string; config?: string; stream?: boolean }) => {
     const workspaceDir = path.resolve(opts.dir);
     const port = Number(opts.port);
 
@@ -141,13 +177,21 @@ const serveCommand = new Command('serve')
     const listenPort = port || config.port || 3000;
 
     const templatePath = path.resolve(workspaceDir, config.template);
+    if (!(await fs.pathExists(templatePath))) {
+      console.error(kleur.red(`Template not found: ${templatePath}`));
+      process.exitCode = 1;
+      return;
+    }
     const template = await fs.readFile(templatePath, 'utf8');
 
     const appModulePath = path.resolve(workspaceDir, config.app);
+    const req = createRequire(path.join(workspaceDir, 'package.json'));
     let App: any;
     try {
-      const appMod = await import(appModulePath);
-      App = appMod.default ?? appMod.App;
+      await withWorkspaceNodePath(workspaceDir, async () => {
+        const appMod = req(appModulePath);
+        App = appMod.default ?? appMod.App;
+      });
       if (!App) throw new Error(`App module has no default export.`);
     } catch (e) {
       console.error(kleur.red(`Failed to load App module: ${e instanceof Error ? e.message : e}`));
@@ -156,9 +200,11 @@ const serveCommand = new Command('serve')
     }
 
     let createEdgeAdapter: (opts: any) => (req: any) => Promise<any>;
+    let renderRouteToStream: ((App: any, route: any) => any) | null = null;
     try {
       const ssrMod = await import('@mfjs/ssr');
       createEdgeAdapter = ssrMod.createEdgeAdapter;
+      renderRouteToStream = typeof ssrMod.renderRouteToStream === 'function' ? ssrMod.renderRouteToStream : null;
     } catch {
       console.error(kleur.red('@mfjs/ssr not found. Install it: pnpm add -D @mfjs/ssr'));
       process.exitCode = 1;
@@ -166,6 +212,8 @@ const serveCommand = new Command('serve')
     }
 
     const handler = createEdgeAdapter({ App, template, routes: config.routes });
+
+    const useStreaming = opts.stream !== false && !!renderRouteToStream;
 
     const server = http.createServer(async (req, res) => {
       const url = `http://localhost:${listenPort}${req.url ?? '/'}`;
@@ -175,10 +223,32 @@ const serveCommand = new Command('serve')
       }
 
       try {
-        const response = await handler({ url, method: req.method ?? 'GET', headers });
-        for (const [k, v] of Object.entries(response.headers)) {
-          res.setHeader(k, String(v));
+        // If the App returns a raw HTML string, use the edge-adapter path.
+        const maybeString = typeof App === 'function' ? App({ path: '/', params: {} }) : null;
+        if (typeof maybeString === 'string') {
+          const response = await handler({ url, method: req.method ?? 'GET', headers });
+          for (const [k, v] of Object.entries(response.headers)) res.setHeader(k, String(v));
+          res.statusCode = response.status;
+          res.end(response.body);
+          return;
         }
+
+        if (useStreaming && req.method !== 'HEAD') {
+          const pathname = new URL(url).pathname;
+          const result = renderRouteToStream!(App, { path: pathname });
+
+          await result.shellReady;
+          res.statusCode = result.statusCode;
+          res.setHeader('content-type', 'text/html; charset=utf-8');
+          res.setHeader('x-mfjs-ssr', '1');
+          result.pipe(res);
+          await result.allReady;
+          return;
+        }
+
+        // Fallback: edge-adapter string render.
+        const response = await handler({ url, method: req.method ?? 'GET', headers });
+        for (const [k, v] of Object.entries(response.headers)) res.setHeader(k, String(v));
         res.statusCode = response.status;
         res.end(response.body);
       } catch (e) {
@@ -188,7 +258,11 @@ const serveCommand = new Command('serve')
     });
 
     server.listen(listenPort, () => {
-      console.log(kleur.green(`\n🚀 MFJS SSR server running at http://localhost:${listenPort}`));
+      console.log(
+        kleur.green(
+          `\n🚀 MFJS SSR server running at http://localhost:${listenPort} (${useStreaming ? 'streaming' : 'string'} mode)`
+        )
+      );
     });
 
     const shutdown = () => {

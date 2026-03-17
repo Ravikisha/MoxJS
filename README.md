@@ -8,6 +8,7 @@ Opinionated micro-frontend framework + tooling built on **Rspack Module Federati
 |---|---|
 | `packages/cli` | `mfjs` CLI (init / generate / dev / build / federation / routes) |
 | `libs/runtime` | `@mfjs/runtime` — router, routing components, hooks, remote loader |
+| `libs/ssr` | `@mfjs/ssr` — server rendering, streaming SSR, static export, edge adapter |
 | `docs/` | Documentation website (Astro Starlight) |
 | `examples/basic` | Runnable host + remote example |
 
@@ -166,6 +167,28 @@ This avoids dev-time 404s for remote split chunks.
 ### Remote rebuild → host reload (HMR)
 
 `mfjs dev --hmr-remotes` starts a small reload server and injects `MFJS_DEV_RELOAD_URL` into each app. Generated hosts call `connectMfjsDevReload()` (from `@mfjs/runtime`) when that env var is present, so the host auto-refreshes whenever a remote recompiles.
+
+---
+
+## SSR / SSG
+
+MFJS ships an SSR/SSG toolkit in `@mfjs/ssr` plus a CLI wrapper (`mfjs ssr`) for static export and a reference Node SSR server.
+
+Features:
+
+- Server rendering to string: `renderRouteToString()` + `injectIntoTemplate()`
+- Streaming SSR (React 18): `renderRouteToStream()`
+- Static export: `staticExport()` or `mfjs ssr export`
+- Edge adapter: `createEdgeAdapter()`
+- Remote SSR helpers: `ssrRenderRemote()` + `createSsrRemoteOutlet()`
+
+CLI:
+
+```sh
+mfjs ssr export
+mfjs ssr serve --port 3000        # streaming by default
+mfjs ssr serve --port 3000 --no-stream
+```
 
 ---
 

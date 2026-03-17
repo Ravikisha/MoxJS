@@ -22,6 +22,12 @@ export type PerfBudgetsConfig = {
   budgets: BudgetRule[];
 };
 
+export type BudgetSummary = {
+  ok: number;
+  warn: number;
+  error: number;
+};
+
 export type BudgetResult = {
   file: string;
   bytes: number;
@@ -29,6 +35,14 @@ export type BudgetResult = {
   status: 'ok' | 'warn' | 'error';
   message?: string;
 };
+
+export function summarizeBudgets(results: BudgetResult[]): BudgetSummary {
+  const out: BudgetSummary = { ok: 0, warn: 0, error: 0 };
+  for (const r of results) {
+    out[r.status] += 1;
+  }
+  return out;
+}
 
 export async function analyzeDist(distDir: string): Promise<BundleFileStat[]> {
   const exists = await fs.pathExists(distDir);
@@ -116,12 +130,14 @@ perfCommand
   .option('--dist <path>', 'Override dist directory (defaults to apps/<app>/dist when --app is set)')
   .option('--format <format>', 'Output format: table|json', 'table')
   .option('--budgets <path>', 'Path to budgets JSON file (optional)')
+  .option('--fail-on-warn', 'Exit with code 1 when any budget produces a warning', false)
   .action(async (opts: {
     dir: string;
     app?: string;
     dist?: string;
     format: 'table' | 'json';
     budgets?: string;
+    failOnWarn: boolean;
   }) => {
     const workspaceDir = path.resolve(opts.dir);
 
@@ -134,12 +150,14 @@ perfCommand
     const files = await analyzeDist(distDir);
 
     let budgetResults: BudgetResult[] | null = null;
+    let budgetSummary: BudgetSummary | null = null;
     if (opts.budgets) {
       const budgetsPath = path.resolve(opts.budgets);
       const cfg = (await fs.readJson(budgetsPath)) as PerfBudgetsConfig;
       budgetResults = evaluateBudgets(files, cfg);
+      budgetSummary = summarizeBudgets(budgetResults);
 
-      if (budgetResults.some((r) => r.status === 'error')) {
+      if (budgetSummary.error > 0 || (opts.failOnWarn && budgetSummary.warn > 0)) {
         process.exitCode = 1;
       }
     }
@@ -151,7 +169,11 @@ perfCommand
           {
             distDir,
             files,
-            budgets: budgetResults,
+            budgets: {
+              results: budgetResults,
+              summary: budgetSummary,
+              failOnWarn: opts.failOnWarn,
+            },
           },
           null,
           2
@@ -186,14 +208,15 @@ perfCommand
     }
 
     if (budgetResults) {
-      const errs = budgetResults.filter((r) => r.status === 'error').length;
-      const warns = budgetResults.filter((r) => r.status === 'warn').length;
+      const summary = budgetSummary ?? summarizeBudgets(budgetResults);
       // eslint-disable-next-line no-console
       console.log(
-        errs > 0
-          ? kleur.red(`Budgets: ${errs} error(s), ${warns} warning(s)`)
-          : warns > 0
-            ? kleur.yellow(`Budgets: 0 error(s), ${warns} warning(s)`)
+        summary.error > 0
+          ? kleur.red(`Budgets: ${summary.error} error(s), ${summary.warn} warning(s)`)
+          : summary.warn > 0
+            ? (opts.failOnWarn
+                ? kleur.red(`Budgets: 0 error(s), ${summary.warn} warning(s) (fail-on-warn)`)
+                : kleur.yellow(`Budgets: 0 error(s), ${summary.warn} warning(s)`))
             : kleur.green('Budgets: OK')
       );
     }

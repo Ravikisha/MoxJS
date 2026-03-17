@@ -13,9 +13,11 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Getting started', slug: 'guides/getting-started' },
+							{ label: 'Performance', slug: 'guides/performance' },
 						{ label: 'Routing', slug: 'guides/routing' },
 						{ label: 'EventBus & Shared State', slug: 'guides/event-bus' },
 						{ label: 'SSR & Static Export', slug: 'guides/ssr' },
+						{ label: 'Examples', slug: 'guides/examples' },
 						{ label: 'TypeScript Integration', slug: 'guides/typescript' },
 						{ label: 'CI/CD Automation', slug: 'guides/ci-cd' },
 						{ label: 'CLI', slug: 'guides/cli' },

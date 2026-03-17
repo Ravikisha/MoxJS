@@ -128,6 +128,53 @@ For Rspack, the remote entry is served at:
 
 ---
 
+### `mfjs ssr`
+
+SSR/SSG utilities powered by `@mfjs/ssr`.
+
+#### `mfjs ssr export`
+
+Pre-render a list of routes to static HTML files.
+
+1) Create `mfjs.ssr.json` in your workspace root:
+
+```json
+{
+  "app": "./src/App.js",
+  "template": "./index.html",
+  "routes": [{ "path": "/" }, { "path": "/about" }],
+  "outDir": "dist-static"
+}
+```
+
+2) Run:
+
+```sh
+mfjs ssr export
+```
+
+Useful flags:
+
+| Flag | Description |
+|---|---|
+| `-d, --dir <path>` | Workspace root (defaults to `process.cwd()`) |
+| `-o, --out <path>` | Output directory override |
+| `-c, --config <path>` | Path to `mfjs.ssr.json` |
+
+#### `mfjs ssr serve`
+
+Starts a small Node SSR server for local testing.
+
+- Streaming SSR is **on by default**.
+- Use `--no-stream` to disable streaming.
+
+```sh
+mfjs ssr serve --port 3000
+mfjs ssr serve --port 3000 --no-stream
+```
+
+---
+
 ### `mfjs perf analyze`
 
 Analyzes build output sizes by walking a `dist/` folder and printing a size report.
@@ -169,6 +216,12 @@ mfjs perf analyze --budgets ./mfjs.perf-budgets.json
 
 If any rule evaluates to **error**, the command exits with code `1`.
 
+To make warnings fail CI too, pass:
+
+```sh
+mfjs perf analyze --budgets ./mfjs.perf-budgets.json --fail-on-warn
+```
+
 A minimal budgets file looks like:
 
 ```json
@@ -195,7 +248,73 @@ Notes:
 - `warnBytes` is optional. If omitted, only `errorBytes` is enforced.
 - Source map files (`*.map`) are included in the analysis by default.
 
+#### JSON schema notes
+
+When using `--format json`, the output includes a `budgets` object:
+
+- `budgets.results`: per-file budget evaluation (or `null` if `--budgets` not provided)
+- `budgets.summary`: `{ ok, warn, error }` counts (or `null`)
+- `budgets.failOnWarn`: whether `--fail-on-warn` was enabled
+
 ---
+
+### `mfjs lazy check`
+
+Best-effort linting for **eager remote loading** by scanning built output (`dist/`) for suspicious patterns.
+
+This is intentionally conservative and string-based (it does not parse AST). It’s mainly useful in CI to catch accidental regressions.
+
+#### Usage
+
+```sh
+cd apps/shell
+pnpm build
+mfjs lazy check --level warn
+```
+
+To fail CI when violations are found:
+
+```sh
+mfjs lazy check --level error
+```
+
+Options:
+
+- `--app <name>`: analyze `apps/<name>/dist`
+- `--dist <path>`: analyze an explicit dist directory
+- `--format table|json`
+- `--level off|warn|error` (default: `warn`)
+
+---
+
+### `mfjs image optimize`
+
+Generates optimized image variants (**WebP/AVIF + responsive widths**) from your built `dist/` output.
+
+This is **opt-in** and runs as a separate step (useful for CI or post-build pipelines).
+
+#### Usage
+
+```sh
+cd apps/shell
+pnpm build
+mfjs image optimize
+```
+
+Analyze a specific app or dist folder:
+
+```sh
+mfjs image optimize --app shell
+mfjs image optimize --dist apps/shell/dist
+```
+
+Common options:
+
+- `--formats webp,avif`
+- `--widths 320,640,960,1280`
+- `--quality 75`
+- `--include .png,.jpg,.jpeg`
+- `--dry-run` (print planned outputs)
 
 ## Example workspace
 
