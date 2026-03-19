@@ -1,9 +1,12 @@
 ---
 title: Performance
 description: Analyze bundle sizes, enforce budgets, and prevent regressions.
+slug: guides/performance
 ---
 
 MFJS includes a small set of performance-focused CLI tools designed to be **CI-friendly** and **bundler-agnostic**.
+
+When available, you can optionally provide a bundler stats/metafile JSON to enable **stats-driven** features like per-route budgets.
 
 ## Bundle analysis
 
@@ -41,8 +44,45 @@ Minimal example:
 
 ```json
 {
-  "rules": [
-    { "name": "main", "match": "**/main*.js", "warnBytes": 250000, "errorBytes": 350000 }
+  "budgets": [
+    { "name": "main", "match": "main", "warnBytes": 250000, "maxBytes": 350000 }
+  ]
+}
+```
+
+### Per-route budgets (stats-driven)
+
+If you want to enforce budgets per route (e.g. “landing page under 300KB, app routes under 500KB”), add a `routes` section.
+
+Per-route budgets require a route→asset mapping from stats JSON.
+
+1) Provide stats:
+
+```sh
+mfjs perf analyze --app shell --stats apps/shell/dist/stats.json
+```
+
+2) Ensure `stats.json` contains an `mfjs.routeAssets` map:
+
+```json
+{
+  "mfjs": {
+    "routeAssets": {
+      "/": ["main.1234.js", "vendor.5678.js"],
+      "/app": ["main.1234.js", "vendor.5678.js", "app.9999.js"]
+    }
+  }
+}
+```
+
+3) Add route rules to your budgets file:
+
+```json
+{
+  "budgets": [],
+  "routes": [
+    { "path": "/", "warnBytes": 250000, "maxBytes": 350000 },
+    { "path": "/app*", "warnBytes": 350000, "maxBytes": 500000 }
   ]
 }
 ```

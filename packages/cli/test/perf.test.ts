@@ -3,7 +3,13 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'fs-extra';
 
-import { analyzeDist, evaluateBudgets, summarizeBudgets } from '../src/commands/perf.js';
+import {
+  analyzeDist,
+  evaluateBudgets,
+  evaluateRouteBudgets,
+  summarizeBudgets,
+  tryLoadBundlerStats,
+} from '../src/commands/perf.js';
 
 async function tmp() {
   return fs.mkdtemp(path.join(os.tmpdir(), 'mfjs-perf-')) as Promise<string>;
@@ -60,5 +66,56 @@ describe('summarizeBudgets', () => {
     ]);
 
     expect(summary).toEqual({ ok: 1, warn: 2, error: 1 });
+  });
+});
+
+describe('per-route budgets', () => {
+  it('evaluates route budgets from stats routeAssets mapping', () => {
+    const res = evaluateRouteBudgets({
+      distFiles: [
+        { file: 'main.aaaa.js', bytes: 1000 },
+        { file: 'vendor.bbbb.js', bytes: 3000 },
+        { file: 'marketing.cccc.js', bytes: 500 },
+      ],
+      cfg: {
+        budgets: [],
+        routes: [
+          { path: '/', warnBytes: 2000, maxBytes: 3500 },
+          { path: '/app*', warnBytes: 2000, maxBytes: 5000 },
+        ],
+      },
+      stats: {
+        kind: 'rspack',
+        routeAssets: {
+          '/': ['main.aaaa.js', 'vendor.bbbb.js'],
+          '/app': ['main.aaaa.js', 'vendor.bbbb.js', 'marketing.cccc.js'],
+        },
+      },
+    });
+
+  expect(res.find((r) => r.route === '/')?.status).toBe('error');
+  expect(res.find((r) => r.route === '/app')?.status).toBe('warn');
+  });
+
+  it('loads routeAssets from stats file (mfjs.routeAssets)', async () => {
+    const dir = await tmp();
+    const dist = path.join(dir, 'dist');
+    await fs.ensureDir(dist);
+
+    await fs.writeJson(
+      path.join(dist, 'stats.json'),
+      {
+        name: 'rspack',
+        mfjs: {
+          routeAssets: {
+            '/': ['main.js'],
+          },
+        },
+      },
+      { spaces: 2 }
+    );
+
+    const loaded = await tryLoadBundlerStats({ distDir: dist });
+    expect(loaded?.routeAssets?.['/']).toEqual(['main.js']);
   });
 });

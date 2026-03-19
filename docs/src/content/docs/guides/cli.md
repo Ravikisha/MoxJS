@@ -1,6 +1,7 @@
 ---
 title: CLI
 description: Commands provided by the MFJS CLI.
+slug: guides/cli
 ---
 
 MFJS comes with a workspace-aware CLI.
@@ -172,6 +173,19 @@ Generated hosts call `connectMfjsDevReload()` from `@mfjs/runtime` when `MFJS_DE
 
 Runs `pnpm build` for all apps that include `mfjs.app.json`.
 
+#### Precompressed assets (gzip + brotli)
+
+If you host your built output behind a CDN/static host that supports serving precompressed assets, you can have MFJS generate `.gz` and `.br` files after each app build:
+
+```sh
+mfjs build --compress
+```
+
+Common options:
+
+- `--compress-include ".js,.css,.html"` — comma-separated list of file extensions to compress
+- `--compress-delete-original` — **not recommended** unless your deploy pipeline explicitly expects only precompressed assets.
+
 ### `mfjs federation`
 
 Generates starter federation config files:
@@ -246,7 +260,9 @@ mfjs ssr serve --port 3000 --no-stream
 
 Analyzes build output sizes by walking a `dist/` folder and printing a size report.
 
-This is meant to be bundler-agnostic: it doesn't need stats/metafile output. It simply reports the files your build produced.
+This is meant to be bundler-agnostic by default: it doesn't need stats/metafile output. It simply reports the files your build produced.
+
+If you *do* provide a bundler stats/metafile JSON, MFJS can produce richer output (and enables **per-route budgets**).
 
 #### Usage
 
@@ -262,6 +278,12 @@ Or analyze an explicit folder:
 
 ```sh
 mfjs perf analyze --dist apps/shell/dist
+```
+
+To enable stats-driven features, pass a stats file (or place `stats.json` inside `dist/`):
+
+```sh
+mfjs perf analyze --dist apps/shell/dist --stats apps/shell/dist/stats.json
 ```
 
 #### Output formats
@@ -293,17 +315,12 @@ A minimal budgets file looks like:
 
 ```json
 {
-  "rules": [
+  "budgets": [
     {
       "name": "main bundle",
-      "match": "**/main*.js",
+      "match": "main",
       "warnBytes": 250000,
-      "errorBytes": 350000
-    },
-    {
-      "name": "any js chunk",
-      "match": "**/*.js",
-      "errorBytes": 500000
+      "maxBytes": 350000
     }
   ]
 }
@@ -311,9 +328,39 @@ A minimal budgets file looks like:
 
 Notes:
 
-- `match` uses glob matching (same style as minimatch), relative to the analyzed `dist` directory.
-- `warnBytes` is optional. If omitted, only `errorBytes` is enforced.
+- `match` is a simple substring match against the file path (relative to `dist/`).
+- `warnBytes` is optional. If omitted, only `maxBytes` is enforced.
 - Source map files (`*.map`) are included in the analysis by default.
+
+#### Per-route budgets (stats-driven)
+
+If your budgets config includes a `routes` section, MFJS can also enforce route-level budgets.
+
+This requires a **route → asset list** mapping, provided via `--stats` (or `dist/stats.json`). MFJS looks for `mfjs.routeAssets` in the JSON:
+
+```json
+{
+  "name": "rspack",
+  "mfjs": {
+    "routeAssets": {
+      "/": ["main.1234.js", "vendor.5678.js"],
+      "/app": ["main.1234.js", "vendor.5678.js", "app.9999.js"]
+    }
+  }
+}
+```
+
+Example budgets with routes:
+
+```json
+{
+  "budgets": [],
+  "routes": [
+    { "path": "/", "warnBytes": 250000, "maxBytes": 350000 },
+    { "path": "/app*", "warnBytes": 350000, "maxBytes": 500000 }
+  ]
+}
+```
 
 #### JSON schema notes
 
@@ -321,6 +368,7 @@ When using `--format json`, the output includes a `budgets` object:
 
 - `budgets.results`: per-file budget evaluation (or `null` if `--budgets` not provided)
 - `budgets.summary`: `{ ok, warn, error }` counts (or `null`)
+- `budgets.routes`: per-route budget evaluation (or `null` if budgets file has no `routes` or no stats mapping)
 - `budgets.failOnWarn`: whether `--fail-on-warn` was enabled
 
 ---

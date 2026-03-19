@@ -11,6 +11,8 @@ export type BundleFileStat = {
 export type BudgetRule = {
   /** Glob-ish substring match against the file path (relative to dist). */
   match: string;
+  /** Optional label used in JSON output and tables. */
+  name?: string;
   /** Soft limit (bytes). Exceeding prints a warning. */
   warnBytes?: number;
   /** Hard limit (bytes). Exceeding sets exitCode=1. */
@@ -20,6 +22,15 @@ export type BudgetRule = {
 export type PerfBudgetsConfig = {
   /** Ordered list of budget rules. First match wins. */
   budgets: BudgetRule[];
+  /** Optional per-route budgets (evaluated using bundler stats chunk→asset mapping when available). */
+  routes?: Array<{
+    /** Optional label used in output. */
+    name?: string;
+    /** Route path pattern. Today we keep it simple: exact string or prefix ending in `*`. */
+    path: string;
+    warnBytes?: number;
+    maxBytes?: number;
+  }>;
 };
 
 export type BudgetSummary = {
@@ -34,6 +45,22 @@ export type BudgetResult = {
   rule?: BudgetRule;
   status: 'ok' | 'warn' | 'error';
   message?: string;
+};
+
+export type RouteBudgetResult = {
+  route: string;
+  bytes: number;
+  rule?: { name?: string; path: string; warnBytes?: number; maxBytes?: number };
+  status: 'ok' | 'warn' | 'error';
+  message?: string;
+  /** Asset list used to compute the budget (when stats are present). */
+  assets?: string[];
+};
+
+export type PerfAnalyzeStats = {
+  kind: 'rspack' | 'webpack';
+  /** route path -> list of files (relative to dist) */
+  routeAssets?: Record<string, string[]> | undefined;
 };
 
 export function summarizeBudgets(results: BudgetResult[]): BudgetSummary {
@@ -112,6 +139,90 @@ export function evaluateBudgets(
   return results;
 }
 
+function routeMatches(rulePath: string, route: string): boolean {
+  if (rulePath.endsWith('*')) {
+    const prefix = rulePath.slice(0, -1);
+    return route.startsWith(prefix);
+  }
+  return route === rulePath;
+}
+
+export function evaluateRouteBudgets(args: {
+  distFiles: BundleFileStat[];
+  cfg: PerfBudgetsConfig;
+  stats: PerfAnalyzeStats;
+}): RouteBudgetResult[] {
+  if (!args.cfg.routes || args.cfg.routes.length === 0) return [];
+  const routeAssets = args.stats.routeAssets ?? {};
+
+  const fileMap = new Map(args.distFiles.map((f) => [f.file, f.bytes] as const));
+
+  const results: RouteBudgetResult[] = [];
+  for (const [route, assets] of Object.entries(routeAssets)) {
+    const rule = args.cfg.routes.find((r) => routeMatches(r.path, route));
+    if (!rule) continue;
+
+    const bytes = assets.reduce((sum, f) => sum + (fileMap.get(f) ?? 0), 0);
+    const warn = rule.warnBytes ?? Infinity;
+    const max = rule.maxBytes ?? Infinity;
+
+    if (bytes > max) {
+      results.push({
+        route,
+        bytes,
+        rule,
+        status: 'error',
+        message: `exceeds maxBytes (${max})`,
+        assets,
+      });
+      continue;
+    }
+
+    if (bytes > warn) {
+      results.push({
+        route,
+        bytes,
+        rule,
+        status: 'warn',
+        message: `exceeds warnBytes (${warn})`,
+        assets,
+      });
+      continue;
+    }
+
+    results.push({ route, bytes, rule, status: 'ok', assets });
+  }
+  return results;
+}
+
+export async function tryLoadBundlerStats(args: {
+  distDir: string;
+  statsPath?: string;
+}): Promise<PerfAnalyzeStats | null> {
+  const candidate = args.statsPath
+    ? path.resolve(args.statsPath)
+    : path.join(path.resolve(args.distDir), 'stats.json');
+
+  const exists = await fs.pathExists(candidate);
+  if (!exists) return null;
+
+  const raw = await fs.readJson(candidate);
+
+  // Minimal parsing: Rspack/Webpack stats both tend to have `assets` and `chunks`.
+  // We optionally allow a custom `mfjs.routeAssets` extension for now.
+  const routeAssets = (raw?.mfjs?.routeAssets ?? raw?.routeAssets ?? null) as
+    | Record<string, string[]>
+    | null;
+
+  const kind: 'rspack' | 'webpack' = raw?.name?.toLowerCase?.().includes('rspack')
+    ? 'rspack'
+    : 'webpack';
+
+  const out: PerfAnalyzeStats = { kind };
+  if (routeAssets) out.routeAssets = routeAssets;
+  return out;
+}
+
 function formatBytes(bytes: number) {
   const kb = bytes / 1024;
   if (kb < 1024) return `${kb.toFixed(1)} KB`;
@@ -130,6 +241,7 @@ perfCommand
   .option('--dist <path>', 'Override dist directory (defaults to apps/<app>/dist when --app is set)')
   .option('--format <format>', 'Output format: table|json', 'table')
   .option('--budgets <path>', 'Path to budgets JSON file (optional)')
+  .option('--stats <path>', 'Optional bundler stats/metafile JSON (enables per-route budgets and richer output)')
   .option('--fail-on-warn', 'Exit with code 1 when any budget produces a warning', false)
   .action(async (opts: {
     dir: string;
@@ -137,6 +249,7 @@ perfCommand
     dist?: string;
     format: 'table' | 'json';
     budgets?: string;
+  stats?: string;
     failOnWarn: boolean;
   }) => {
     const workspaceDir = path.resolve(opts.dir);
@@ -149,15 +262,43 @@ perfCommand
 
     const files = await analyzeDist(distDir);
 
+    const stats = await tryLoadBundlerStats(
+      opts.stats ? { distDir, statsPath: opts.stats } : { distDir }
+    );
+
     let budgetResults: BudgetResult[] | null = null;
     let budgetSummary: BudgetSummary | null = null;
+    let routeBudgetResults: RouteBudgetResult[] | null = null;
     if (opts.budgets) {
       const budgetsPath = path.resolve(opts.budgets);
       const cfg = (await fs.readJson(budgetsPath)) as PerfBudgetsConfig;
       budgetResults = evaluateBudgets(files, cfg);
       budgetSummary = summarizeBudgets(budgetResults);
 
+      if (cfg.routes?.length) {
+        if (!stats?.routeAssets) {
+          // eslint-disable-next-line no-console
+          console.log(
+            kleur.yellow(
+              'Per-route budgets are configured, but no stats route mapping was found. Provide --stats (or dist/stats.json with mfjs.routeAssets).' 
+            )
+          );
+        } else {
+          routeBudgetResults = evaluateRouteBudgets({ distFiles: files, cfg, stats });
+        }
+      }
+
       if (budgetSummary.error > 0 || (opts.failOnWarn && budgetSummary.warn > 0)) {
+        process.exitCode = 1;
+      }
+
+      if (routeBudgetResults?.some((r) => r.status === 'error')) {
+        process.exitCode = 1;
+      }
+      if (
+        opts.failOnWarn &&
+        routeBudgetResults?.some((r) => r.status === 'warn')
+      ) {
         process.exitCode = 1;
       }
     }
@@ -169,9 +310,11 @@ perfCommand
           {
             distDir,
             files,
+            stats,
             budgets: {
               results: budgetResults,
               summary: budgetSummary,
+              routes: routeBudgetResults,
               failOnWarn: opts.failOnWarn,
             },
           },
@@ -219,5 +362,21 @@ perfCommand
                 : kleur.yellow(`Budgets: 0 error(s), ${summary.warn} warning(s)`))
             : kleur.green('Budgets: OK')
       );
+    }
+
+    if (routeBudgetResults && routeBudgetResults.length > 0) {
+      // eslint-disable-next-line no-console
+      console.log(kleur.cyan('Route budgets'));
+      for (const r of routeBudgetResults) {
+        const tag =
+          r.status === 'error'
+            ? kleur.red('ERR')
+            : r.status === 'warn'
+              ? kleur.yellow('WARN')
+              : kleur.gray('ok');
+        const msg = r.message ? kleur.gray(` (${r.message})`) : '';
+        // eslint-disable-next-line no-console
+        console.log(`  ${tag}  ${formatBytes(r.bytes).padStart(10)}  ${r.route}${msg}`);
+      }
     }
   });

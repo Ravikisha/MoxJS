@@ -1,14 +1,15 @@
 ---
 title: Examples
+description: Runnable example workspaces included in the repo.
 ---
 
-MFJS ships with a few runnable examples under the repo’s `examples/` folder.
+MFJS ships with runnable example workspaces under the repo’s `examples/` folder.
 
 ## Basic
 
 - Location: `examples/basic`
-- What it covers: host + remote, routing, event bus, shared state, on-demand / proxy remotes.
-- Tests: root Playwright suite (`tests/e2e/*`) — see `pnpm e2e`.
+- What it covers: host + remote, routing, event bus, shared state, and dev workflows (proxy remotes, on-demand).
+- Walkthrough: see [Example walkthrough](/guides/example/).
 
 ## E-commerce (SSG export)
 

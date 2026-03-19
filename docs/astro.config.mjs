@@ -14,7 +14,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Getting started', slug: 'guides/getting-started' },
 						{ label: 'Scaffold an app', slug: 'guides/scaffold-app' },
-							{ label: 'Performance', slug: 'guides/performance' },
+						{ label: 'Performance', slug: 'guides/performance' },
 						{ label: 'Routing', slug: 'guides/routing' },
 						{ label: 'EventBus & Shared State', slug: 'guides/event-bus' },
 						{ label: 'SSR & Static Export', slug: 'guides/ssr' },
@@ -22,7 +22,7 @@ export default defineConfig({
 						{ label: 'TypeScript Integration', slug: 'guides/typescript' },
 						{ label: 'CI/CD Automation', slug: 'guides/ci-cd' },
 						{ label: 'CLI', slug: 'guides/cli' },
-						{ label: 'Example', slug: 'guides/example' },
+						{ label: 'Example walkthrough', slug: 'guides/example' },
 					],
 				},
 				{
