@@ -12,6 +12,8 @@ import fs from 'fs-extra';
 import kleur from 'kleur';
 import http from 'node:http';
 import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { printCliError } from '../errors.js';
 
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -37,6 +39,17 @@ type SsrConfig = {
   /** Dev server port for `mfjs ssr serve`. */
   port?: number;
 };
+
+async function loadUserAppModule(appModulePath: string) {
+  // Prefer ESM-friendly dynamic import. This supports:
+  // - ESM modules
+  // - CJS modules (Node will provide a synthetic default export)
+  //
+  // It does NOT transpile TypeScript. For TS sources, users should build first
+  // or point mfjs.ssr.json at a built JS entry.
+  const url = pathToFileURL(appModulePath).href;
+  return import(url);
+}
 
 function withWorkspaceNodePath<T>(workspaceDir: string, fn: () => Promise<T>): Promise<T> {
   const prev = process.env['NODE_PATH'];
@@ -70,9 +83,10 @@ const exportCommand = new Command('export')
       : path.join(workspaceDir, 'mfjs.ssr.json');
 
     if (!(await fs.pathExists(configPath))) {
-      console.error(kleur.red(`No SSR config found at ${configPath}`));
-      console.error(kleur.gray('Create a mfjs.ssr.json with { app, template, routes, outDir }.'));
-      process.exitCode = 1;
+      printCliError(new Error(`No SSR config found at ${configPath}`), {
+        command: 'ssr export',
+        hint: 'Create a mfjs.ssr.json with { app, template, routes, outDir }.',
+      });
       return;
     }
 
@@ -85,8 +99,7 @@ const exportCommand = new Command('export')
 
     const templatePath = path.resolve(workspaceDir, config.template);
     if (!(await fs.pathExists(templatePath))) {
-      console.error(kleur.red(`Template not found: ${templatePath}`));
-      process.exitCode = 1;
+  printCliError(new Error(`Template not found: ${templatePath}`), { command: 'ssr export' });
       return;
     }
 
@@ -97,18 +110,18 @@ const exportCommand = new Command('export')
 
     console.log(kleur.cyan(`Pre-rendering ${config.routes.length} route(s) → ${outDir}`));
 
-    const req = createRequire(path.join(workspaceDir, 'package.json'));
     let App: any;
     try {
       await withWorkspaceNodePath(workspaceDir, async () => {
-        // Use require() to resolve relative to the workspace.
-        const appMod = req(appModulePath);
+        const appMod = await loadUserAppModule(appModulePath);
         App = appMod.default ?? appMod.App;
       });
       if (!App) throw new Error(`App module at ${appModulePath} has no default export.`);
     } catch (e) {
-      console.error(kleur.red(`Failed to load App module: ${e instanceof Error ? e.message : e}`));
-      process.exitCode = 1;
+      printCliError(e, {
+        command: 'ssr export',
+        hint: 'SSR app module must be a built JavaScript file (ESM or CJS). TypeScript is not transpiled at runtime.',
+      });
       return;
     }
 
@@ -119,8 +132,10 @@ const exportCommand = new Command('export')
       staticExport = ssrMod.staticExport;
       injectIntoTemplate = typeof ssrMod.injectIntoTemplate === 'function' ? ssrMod.injectIntoTemplate : null;
     } catch (e) {
-      console.error(kleur.red('@mfjs/ssr not found. Install it: pnpm add -D @mfjs/ssr'));
-      process.exitCode = 1;
+      printCliError(new Error('@mfjs/ssr not found.'), {
+        command: 'ssr export',
+        hint: 'Install it: pnpm add -D @mfjs/ssr',
+      });
       return;
     }
 
@@ -168,8 +183,10 @@ const serveCommand = new Command('serve')
       : path.join(workspaceDir, 'mfjs.ssr.json');
 
     if (!(await fs.pathExists(configPath))) {
-      console.error(kleur.red(`No SSR config found at ${configPath}`));
-      process.exitCode = 1;
+      printCliError(new Error(`No SSR config found at ${configPath}`), {
+        command: 'ssr serve',
+        hint: 'Create a mfjs.ssr.json with { app, template, routes, outDir }.',
+      });
       return;
     }
 
@@ -178,24 +195,24 @@ const serveCommand = new Command('serve')
 
     const templatePath = path.resolve(workspaceDir, config.template);
     if (!(await fs.pathExists(templatePath))) {
-      console.error(kleur.red(`Template not found: ${templatePath}`));
-      process.exitCode = 1;
+  printCliError(new Error(`Template not found: ${templatePath}`), { command: 'ssr serve' });
       return;
     }
     const template = await fs.readFile(templatePath, 'utf8');
 
     const appModulePath = path.resolve(workspaceDir, config.app);
-    const req = createRequire(path.join(workspaceDir, 'package.json'));
     let App: any;
     try {
       await withWorkspaceNodePath(workspaceDir, async () => {
-        const appMod = req(appModulePath);
+        const appMod = await loadUserAppModule(appModulePath);
         App = appMod.default ?? appMod.App;
       });
       if (!App) throw new Error(`App module has no default export.`);
     } catch (e) {
-      console.error(kleur.red(`Failed to load App module: ${e instanceof Error ? e.message : e}`));
-      process.exitCode = 1;
+      printCliError(e, {
+        command: 'ssr serve',
+        hint: 'SSR app module must be a built JavaScript file (ESM or CJS). TypeScript is not transpiled at runtime.',
+      });
       return;
     }
 
@@ -206,8 +223,10 @@ const serveCommand = new Command('serve')
       createEdgeAdapter = ssrMod.createEdgeAdapter;
       renderRouteToStream = typeof ssrMod.renderRouteToStream === 'function' ? ssrMod.renderRouteToStream : null;
     } catch {
-      console.error(kleur.red('@mfjs/ssr not found. Install it: pnpm add -D @mfjs/ssr'));
-      process.exitCode = 1;
+      printCliError(new Error('@mfjs/ssr not found.'), {
+        command: 'ssr serve',
+        hint: 'Install it: pnpm add -D @mfjs/ssr',
+      });
       return;
     }
 
@@ -267,7 +286,15 @@ const serveCommand = new Command('serve')
 
     const shutdown = () => {
       console.log(kleur.yellow('\nShutting down SSR server...'));
-      server.close(() => process.exit(0));
+      server.close((err) => {
+        if (err) {
+          console.error(kleur.red(`Failed to close server cleanly: ${err.message}`));
+          process.exitCode = 1;
+          return;
+        }
+        // Let Node exit naturally so stdout/stderr flush and pending promises settle.
+        process.exitCode = process.exitCode ?? 0;
+      });
     };
     process.once('SIGINT', shutdown);
     process.once('SIGTERM', shutdown);

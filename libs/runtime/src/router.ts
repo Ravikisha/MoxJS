@@ -16,11 +16,22 @@ function toUrlParts(to: string) {
   return { pathname: u.pathname, search: u.search, hash: u.hash };
 }
 
+function assertBrowser(api: string) {
+  if (typeof window === 'undefined') {
+    throw new Error(
+      `${api} requires a browser environment (window). ` +
+        `If you're calling this from SSR, create a server router instead.`
+    );
+  }
+}
+
 function currentPath() {
+  assertBrowser('router.currentPath');
   return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }
 
 export function dispatchMfjsNavigate(detail: NavigateDetail) {
+  assertBrowser('dispatchMfjsNavigate');
   window.dispatchEvent(new CustomEvent<NavigateDetail>(MFJS_NAVIGATE_EVENT, { detail }));
 }
 
@@ -43,6 +54,7 @@ export type RouterOptions = {
 };
 
 export function createRouter(opts: RouterOptions = {}): Router {
+  assertBrowser('createRouter');
   const { basePath = '', listenToNavigateEvents = true } = opts;
 
   const subs = new Set<(path: string) => void>();
@@ -112,6 +124,7 @@ export function createRouter(opts: RouterOptions = {}): Router {
  * Use this in the host if you want remotes to be able to navigate without importing the router.
  */
 export function attachMfjsNavigateListener() {
+  assertBrowser('attachMfjsNavigateListener');
   const onNavigateEvent = (e: Event) => {
     const ce = e as CustomEvent<NavigateDetail>;
     if (!ce.detail?.to) return;

@@ -115,7 +115,18 @@ function scriptId(remoteName: string) {
   return `mfjs-remote-${remoteName}`;
 }
 
+function isBrowserEnv() {
+  return typeof document !== 'undefined' && typeof window !== 'undefined';
+}
+
 export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRemoteEntryOptions) {
+  if (!isBrowserEnv()) {
+    throw new Error(
+      `loadRemoteEntry("${remote.name}") requires a browser environment (document/window). ` +
+        `If you're calling this from SSR, only load remotes on the client.`
+    );
+  }
+
   const g = getGlobal();
   const id = scriptId(remote.name);
 
@@ -145,7 +156,7 @@ export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRe
   if (g[remote.name]) return;
 
   // If script already exists wait for it
-  const existing = document.getElementById(id) as HTMLScriptElement | null;
+  const existing = globalThis.document.getElementById(id) as HTMLScriptElement | null;
   if (existing) {
     return new Promise<void>((resolve, reject) => {
       existing.addEventListener("load", () => resolve());
@@ -156,7 +167,7 @@ export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRe
   }
 
   await new Promise<void>((resolve, reject) => {
-    const script = document.createElement("script");
+    const script = globalThis.document.createElement("script");
 
     script.id = id;
     script.src = remote.entryUrl;
@@ -197,7 +208,7 @@ export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRe
     script.onerror = () =>
       reject(new Error(`Failed to load remoteEntry: ${remote.entryUrl}`));
 
-    document.head.appendChild(script);
+  globalThis.document.head.appendChild(script);
   });
 }
 

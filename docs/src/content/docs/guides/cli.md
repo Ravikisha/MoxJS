@@ -140,6 +140,21 @@ export const pages: RemotePageRoute[] = [
 
 Import `pages` in your `remote.tsx` and pass it to `<RemoteApp pages={pages} />`.
 
+---
+
+### `mfjs ssr`
+
+`mfjs ssr` provides:
+
+- `mfjs ssr serve` — run an SSR server
+- `mfjs ssr export` — pre-render routes to static HTML
+
+#### App module loading (ESM/CJS)
+
+The SSR command loads your app module using dynamic `import()` (via a file URL) for ESM/CJS compatibility.
+
+**Contract:** `mfjs.ssr.json` → `app` must point to a **built JavaScript module** (ESM or CJS). TypeScript source files (`.ts`/`.tsx`) are **not transpiled at runtime**.
+
 ### `mfjs dev`
 
 Runs `pnpm dev` for all apps that include `mfjs.app.json`.

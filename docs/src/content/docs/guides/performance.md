@@ -73,6 +73,47 @@ mfjs perf analyze --app shell --stats apps/shell/dist/stats.json
     }
   }
 }
+
+### Generating `stats.json` (Rspack recipe)
+
+MFJS doesn't hard-code a bundler implementation for route→asset mapping. Instead, you can add a small build plugin that writes a minimal `stats.json` containing `mfjs.routeAssets`.
+
+MFJS ships a tiny helper for Rspack-compatible configs: `@mfjs/rspack-route-assets`.
+
+In your `rspack.config.ts`:
+
+```ts
+import { mfjsRspackRouteAssetsPlugin } from '@mfjs/rspack-route-assets';
+
+export default {
+  // ... your normal config ...
+  entry: {
+    main: './src/main.tsx',
+    app: './src/app.tsx',
+  },
+  plugins: [
+    mfjsRspackRouteAssetsPlugin({
+      // Route path -> entry name
+      routeEntries: {
+        '/': 'main',
+        '/app': 'app',
+      },
+      // This will emit dist/stats.json by default
+      statsFile: 'stats.json',
+    }),
+  ],
+};
+```
+
+After `pnpm build`, you should have:
+
+- `dist/stats.json` containing `{ mfjs: { routeAssets: ... } }`
+
+Then you can run:
+
+```sh
+mfjs perf analyze --app shell --stats apps/shell/dist/stats.json
+```
 ```
 
 3) Add route rules to your budgets file:

@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import kleur from 'kleur';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { initCommand } from './commands/init.js';
 import { generateCommand } from './commands/generate.js';
 import { devCommand } from './commands/dev.js';
@@ -16,13 +17,26 @@ import { perfCommand } from './commands/perf.js';
 import { lazyCommand } from './commands/lazy.js';
 import { imageCommand } from './commands/image.js';
 import { scaffoldCommand } from './commands/scaffold.js';
+import { printCliError } from './errors.js';
 
 export const program = new Command();
+
+function getCliVersion(): string {
+  try {
+    const req = createRequire(import.meta.url);
+    // package.json sits one level up from src/
+    const pkg = req('../package.json') as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 
 program
   .name('mfjs')
   .description('MFJS CLI (micro-frontend framework)')
-  .version('0.0.0');
+  .version(getCliVersion());
 
 program.addCommand(initCommand);
 program.addCommand(generateCommand);
@@ -57,9 +71,6 @@ if (isDirectInvocation) {
   try {
     program.parse(process.argv);
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    // eslint-disable-next-line no-console
-    console.error(kleur.red(`mfjs failed: ${message}`));
-    process.exitCode = 1;
+  printCliError(err);
   }
 }
