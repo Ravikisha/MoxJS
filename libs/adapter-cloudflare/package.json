@@ -1,0 +1,20 @@
+{
+  "name": "@mfjs/adapter-cloudflare",
+  "version": "0.1.0",
+  "description": "Cloudflare Pages / Workers deployment adapter for MFJS.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "templates", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@mfjs/ssr": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.7.3"
+  }
+}

@@ -16,6 +16,28 @@ export type CliWorkspaceConfig = {
   };
   federation?: {
     shared?: string[];
+    /** CDN public path baked into every built remote. Example: "https://cdn.mycorp.com/mfe/". */
+    publicPath?: string;
+    /** Subresource Integrity: generate integrity="sha384-..." for remoteEntry scripts. */
+    sri?: boolean | { algo?: 'sha256' | 'sha384' | 'sha512' };
+    /** Remote origin allowlist — runtime registry will reject unlisted URLs. */
+    allowlist?: string[];
+    /** Warn when host and remote ship incompatible versions. */
+    versionCheck?: boolean;
+  };
+  security?: {
+    csp?: {
+      enabled?: boolean;
+      reportUri?: string;
+    };
+    allowInlineScripts?: boolean;
+  };
+  observability?: {
+    adapter?: 'console' | 'sentry' | 'none';
+    webVitals?: boolean;
+  };
+  deploy?: {
+    target?: 'vercel' | 'cloudflare' | 'netlify' | 'node' | 'docker';
   };
   plugins?: CliPlugin[];
 };

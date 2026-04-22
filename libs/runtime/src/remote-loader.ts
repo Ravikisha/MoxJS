@@ -1,3 +1,5 @@
+import { emitRemoteLoad } from './telemetry.js';
+
 export type FederationRemote = {
   name: string;
   entryUrl: string;
@@ -129,6 +131,8 @@ export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRe
 
   const g = getGlobal();
   const id = scriptId(remote.name);
+  const startedAt = Date.now();
+  emitRemoteLoad({ remote: remote.name, url: remote.entryUrl, phase: 'start' });
 
   const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -153,16 +157,24 @@ export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRe
   }
 
   // If container already loaded
-  if (g[remote.name]) return;
+  if (g[remote.name]) {
+    emitRemoteLoad({ remote: remote.name, url: remote.entryUrl, phase: 'success', durationMs: 0 });
+    return;
+  }
 
   // If script already exists wait for it
   const existing = globalThis.document.getElementById(id) as HTMLScriptElement | null;
   if (existing) {
     return new Promise<void>((resolve, reject) => {
-      existing.addEventListener("load", () => resolve());
-      existing.addEventListener("error", () =>
-        reject(new Error(`Failed to load remoteEntry: ${remote.entryUrl}`))
-      );
+      existing.addEventListener("load", () => {
+        emitRemoteLoad({ remote: remote.name, url: remote.entryUrl, phase: 'success', durationMs: Date.now() - startedAt });
+        resolve();
+      });
+      existing.addEventListener("error", () => {
+        const err = new Error(`Failed to load remoteEntry: ${remote.entryUrl}`);
+        emitRemoteLoad({ remote: remote.name, url: remote.entryUrl, phase: 'error', durationMs: Date.now() - startedAt, error: err });
+        reject(err);
+      });
     });
   }
 
@@ -186,11 +198,11 @@ export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRe
         }
 
         if (!g[remote.name]) {
-          reject(
-            new Error(
-              `Remote container "${remote.name}" not found after loading ${remote.entryUrl} (waited ${timeoutMs}ms)`
-            )
+          const err = new Error(
+            `Remote container "${remote.name}" not found after loading ${remote.entryUrl} (waited ${timeoutMs}ms)`
           );
+          emitRemoteLoad({ remote: remote.name, url: remote.entryUrl, phase: 'timeout', durationMs: Date.now() - startedAt, error: err });
+          reject(err);
           return;
         }
 
@@ -201,12 +213,16 @@ export async function loadRemoteEntry(remote: FederationRemote, options?: LoadRe
           );
         }
 
+        emitRemoteLoad({ remote: remote.name, url: remote.entryUrl, phase: 'success', durationMs: Date.now() - startedAt });
         resolve();
       })().catch(reject);
     };
 
-    script.onerror = () =>
-      reject(new Error(`Failed to load remoteEntry: ${remote.entryUrl}`));
+    script.onerror = () => {
+      const err = new Error(`Failed to load remoteEntry: ${remote.entryUrl}`);
+      emitRemoteLoad({ remote: remote.name, url: remote.entryUrl, phase: 'error', durationMs: Date.now() - startedAt, error: err });
+      reject(err);
+    };
 
   globalThis.document.head.appendChild(script);
   });

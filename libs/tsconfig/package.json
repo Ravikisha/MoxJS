@@ -1,0 +1,7 @@
+{
+  "name": "@mfjs/tsconfig",
+  "version": "0.1.0",
+  "description": "Shared TypeScript config presets for MFJS projects.",
+  "publishConfig": { "access": "public" },
+  "files": ["base.json", "react.json", "node.json", "library.json", "README.md"]
+}

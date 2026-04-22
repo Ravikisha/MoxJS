@@ -42,3 +42,28 @@ export {
 
 // Route utilities
 export { matchRoutePath, type SsrRouteMatch } from './route-utils.js';
+
+// Redirects
+export { redirect, isRedirect, SsrRedirect } from './redirect.js';
+
+// State hydration
+export {
+  serializeState,
+  hydrateState,
+  clearHydratedState,
+  type SerializeStateOptions,
+} from './state-hydration.js';
+
+// Preload links
+export { buildPreloadTags, remoteEntryPreloads, type PreloadLink } from './preload.js';
+
+// Cache headers
+export {
+  cacheControl,
+  buildWeakEtag,
+  ifNoneMatchHit,
+  type CacheControlOptions,
+} from './cache-headers.js';
+
+// Edge adapter options
+export type { EdgeAdapterExtraOptions } from './edge-adapter.js';

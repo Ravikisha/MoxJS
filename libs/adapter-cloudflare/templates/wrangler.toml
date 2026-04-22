@@ -1,0 +1,13 @@
+name = "mfjs-shell"
+main = "dist/worker.js"
+compatibility_date = "2025-01-01"
+
+[build]
+command = "pnpm build"
+
+[[routes]]
+pattern = "example.com/*"
+zone_name = "example.com"
+
+[vars]
+MFJS_ENV = "production"

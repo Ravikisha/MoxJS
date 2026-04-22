@@ -14,6 +14,8 @@ import React from 'react';
 import { createRouter, dispatchMfjsNavigate, type Router, type RouterOptions } from './router.js';
 import { resolveRoute, type RouteTarget, type ResolvedRoute } from './routes.js';
 import { ErrorBoundary } from './error-boundary.js';
+import { prefetchRoute } from './prefetch.js';
+import type { FederationRemote } from './remote-loader.js';
 
 // ── Singleton router ──────────────────────────────────────────────────────────
 
@@ -85,7 +87,30 @@ export type NavLinkProps = {
   style?: React.CSSProperties;
   activeStyle?: React.CSSProperties;
   children?: React.ReactNode;
+  /**
+   * Prefetch the target remote on hover / focus / touch.
+   * `true` uses the NavLinkPrefetchProvider context; pass an explicit config to
+   * override.
+   */
+  prefetch?: boolean | NavLinkPrefetchConfig;
 };
+
+export interface NavLinkPrefetchConfig {
+  routes: RouteTarget[];
+  remotes: Record<string, FederationRemote>;
+}
+
+const PrefetchContext = React.createContext<NavLinkPrefetchConfig | null>(null);
+
+export function NavLinkPrefetchProvider({
+  config,
+  children,
+}: {
+  config: NavLinkPrefetchConfig;
+  children: React.ReactNode;
+}) {
+  return <PrefetchContext.Provider value={config}>{children}</PrefetchContext.Provider>;
+}
 
 /**
  * A navigation link that dispatches `mfjs:navigate` instead of causing a full
@@ -99,15 +124,16 @@ export function NavLink({
   style,
   activeStyle,
   children,
+  prefetch,
 }: NavLinkProps) {
   const pathname = usePathname();
   const currentPath = currentPathProp ?? pathname;
+  const contextPrefetch = React.useContext(PrefetchContext);
 
   const cleanTo = to.replace('/*', '');
   const isActive =
     cleanTo === '/' ? currentPath === '/' : currentPath.startsWith(cleanTo);
 
-  // Build testid from path: "/dashboard/settings" → "nav-dashboard-settings"
   const testId =
     'nav-' +
     (cleanTo
@@ -126,6 +152,18 @@ export function NavLink({
     cursor: 'pointer',
   };
 
+  const prefetchConfig: NavLinkPrefetchConfig | null =
+    prefetch === true
+      ? contextPrefetch
+      : prefetch && typeof prefetch === 'object'
+        ? prefetch
+        : null;
+
+  const triggerPrefetch = React.useCallback(() => {
+    if (!prefetchConfig) return;
+    void prefetchRoute(cleanTo || '/', prefetchConfig);
+  }, [cleanTo, prefetchConfig]);
+
   return (
     <a
       data-testid={testId}
@@ -136,6 +174,9 @@ export function NavLink({
         e.preventDefault();
         dispatchMfjsNavigate({ to: cleanTo || '/' });
       }}
+      onMouseEnter={triggerPrefetch}
+      onFocus={triggerPrefetch}
+      onTouchStart={triggerPrefetch}
     >
       {children ?? label}
     </a>

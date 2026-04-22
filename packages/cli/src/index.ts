@@ -17,6 +17,12 @@ import { perfCommand } from './commands/perf.js';
 import { lazyCommand } from './commands/lazy.js';
 import { imageCommand } from './commands/image.js';
 import { scaffoldCommand } from './commands/scaffold.js';
+import { diagnoseCommand } from './commands/diagnose.js';
+import { deployCommand } from './commands/deploy.js';
+import { lintCommand } from './commands/lint.js';
+import { testCommand } from './commands/test.js';
+import { envCommand } from './commands/env.js';
+import { swCommand } from './commands/sw.js';
 import { printCliError } from './errors.js';
 
 export const program = new Command();
@@ -51,6 +57,12 @@ program.addCommand(perfCommand);
 program.addCommand(lazyCommand);
 program.addCommand(imageCommand);
 program.addCommand(scaffoldCommand);
+program.addCommand(diagnoseCommand);
+program.addCommand(deployCommand);
+program.addCommand(lintCommand);
+program.addCommand(testCommand);
+program.addCommand(envCommand);
+program.addCommand(swCommand);
 
 program.showHelpAfterError();
 

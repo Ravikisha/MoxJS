@@ -169,11 +169,75 @@ async function writeRemoteRoutesModule(appDir: string, routes: PageRoute[]) {
   await fs.outputFile(outFile, lines.join('\n'), 'utf8');
 }
 
+async function generateAllRoutes(workspaceDir: string): Promise<void> {
+  const apps = await findApps(workspaceDir);
+  if (apps.length === 0) {
+    console.log(kleur.yellow('No apps found (missing apps/*/mfjs.app.json).'));
+    return;
+  }
+  const host = apps.find((a) => a.meta.type === 'host');
+  const remotes = apps.filter((a) => a.meta.type === 'remote');
+
+  for (const app of apps) {
+    const basePath = app.meta.type === 'host' ? '/' : `/${app.meta.name}`;
+    const routes = await scanPages(app.dir);
+    const manifest: AppRoutesManifest = { app: app.meta.name, basePath, routes };
+    const outPath = path.join(app.dir, 'mfjs.routes.json');
+    await fs.outputFile(outPath, JSON.stringify(manifest, null, 2) + '\n', 'utf8');
+    if (app.meta.type === 'remote') {
+      await writeRemoteRoutesModule(app.dir, routes);
+    }
+  }
+
+  if (host) {
+    const defaultRemote = remotes[0];
+    const hostRouteTable: HostRoutesManifest = {
+      host: host.meta.name,
+      routes: [
+        ...(defaultRemote ? [{ path: '/', remote: defaultRemote.meta.name, module: './App' }] : []),
+        ...remotes.map((r) => ({ path: `/${r.meta.name}/*`, remote: r.meta.name, module: './App' })),
+      ],
+    };
+    const outPath = path.join(host.dir, 'mfjs.routes.host.json');
+    await fs.outputFile(outPath, JSON.stringify(hostRouteTable, null, 2) + '\n', 'utf8');
+  }
+}
+
 export const routesCommand = new Command('routes')
   .description('Generate file-based routing manifests from apps/*/src/pages')
   .option('-d, --dir <path>', 'Workspace root directory', process.cwd())
-  .action(async (opts: { dir: string }) => {
+  .option('--watch', 'Re-run whenever a page file changes')
+  .action(async (opts: { dir: string; watch?: boolean }) => {
     const workspaceDir = path.resolve(opts.dir);
+
+    if (opts.watch) {
+      console.log(kleur.cyan(`watching ${workspaceDir}/apps/*/src/pages ...`));
+      await generateAllRoutes(workspaceDir);
+      console.log(kleur.green('initial route manifests written'));
+
+      const appsDir = path.join(workspaceDir, 'apps');
+      const { watch } = await import('node:fs');
+      let timer: NodeJS.Timeout | null = null;
+      const schedule = () => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(async () => {
+          try {
+            await generateAllRoutes(workspaceDir);
+            console.log(kleur.green(`[${new Date().toLocaleTimeString()}] routes rebuilt`));
+          } catch (e) {
+            console.error(kleur.red('routes rebuild failed:'), e);
+          }
+        }, 100);
+      };
+      watch(appsDir, { recursive: true }, (_evt, file) => {
+        if (!file) return;
+        const s = String(file).replace(/\\/g, '/');
+        if (!/src\/pages\//.test(s)) return;
+        schedule();
+      });
+      return;
+    }
+
     const apps = await findApps(workspaceDir);
 
     if (apps.length === 0) {

@@ -1,0 +1,19 @@
+{
+  "name": "@mfjs/eslint-config",
+  "version": "0.1.0",
+  "description": "Shared ESLint 9 flat config for MFJS apps and libraries.",
+  "type": "module",
+  "main": "./index.js",
+  "publishConfig": { "access": "public" },
+  "files": ["index.js", "react.js", "README.md"],
+  "peerDependencies": {
+    "eslint": "^9.0.0"
+  },
+  "dependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint-plugin-react": "^7.35.0",
+    "eslint-plugin-react-hooks": "^5.0.0",
+    "globals": "^15.0.0"
+  }
+}
