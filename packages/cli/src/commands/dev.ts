@@ -5,9 +5,38 @@ import kleur from 'kleur';
 import { spawn } from 'node:child_process';
 import http from 'node:http';
 import { WebSocketServer } from 'ws';
+import treeKill from 'tree-kill';
+import chokidar from 'chokidar';
 import { federationCommand } from './federation.js';
 import { routesCommand } from './routes.js';
 import { loadWorkspaceConfig } from '../config.js';
+
+const isWindows = process.platform === 'win32';
+
+function resolveCmd(cmd: string): string {
+  // pnpm on Windows is a .cmd shim — Node spawn cannot resolve it without shell:true.
+  // We swap to pnpm.cmd directly to keep arg quoting predictable.
+  if (isWindows && cmd === 'pnpm') return 'pnpm.cmd';
+  return cmd;
+}
+
+function killTree(pid: number | undefined, timeoutMs = 3_000): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (!pid) return resolve();
+    let settled = false;
+    const fallback = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      treeKill(pid, 'SIGKILL', () => resolve());
+    }, timeoutMs);
+    treeKill(pid, isWindows ? 'SIGTERM' : 'SIGTERM', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(fallback);
+      resolve();
+    });
+  });
+}
 
 type DevOpts = {
   dir: string;
@@ -38,15 +67,9 @@ async function ensureFederationConfigs(workspaceDir: string, apps: Array<{ dir: 
 
   console.log(kleur.cyan('No mfjs.federation.json found for one or more apps. Generating...'));
 
-  // Run the federation generator in-process.
+  // Run in-process; pass --dir so we never need to mutate process.cwd().
   federationCommand.exitOverride();
-  const prev = process.cwd();
-  process.chdir(workspaceDir);
-  try {
-    await federationCommand.parseAsync(['--dir', workspaceDir], { from: 'user' });
-  } finally {
-    process.chdir(prev);
-  }
+  await federationCommand.parseAsync(['--dir', workspaceDir], { from: 'user' });
 
   return true;
 }
@@ -87,22 +110,14 @@ async function ensureRoutesManifests(workspaceDir: string) {
 
   console.log(kleur.cyan('No mfjs.routes.json found for one or more apps. Generating...'));
   routesCommand.exitOverride();
-  const prev = process.cwd();
-  process.chdir(workspaceDir);
-  try {
-    await routesCommand.parseAsync(['--dir', workspaceDir], { from: 'user' });
-  } finally {
-    process.chdir(prev);
-  }
+  await routesCommand.parseAsync(['--dir', workspaceDir], { from: 'user' });
 
   return true;
 }
 
 function run(cmd: string, args: string[], cwd: string, env?: NodeJS.ProcessEnv) {
-  const child = spawn(cmd, args, {
+  const child = spawn(resolveCmd(cmd), args, {
     cwd,
-    // We need stdout/stderr to detect rebuilds for cross-app HMR (remote -> host).
-    // So we keep pipes and forward output to this process.
     stdio: ['inherit', 'pipe', 'pipe'],
     shell: false,
     env: { ...process.env, ...env },
@@ -138,24 +153,23 @@ export function _devEnvForApp(args: {
 function attachGracefulShutdown(children: Array<ReturnType<typeof spawn>>) {
   let shuttingDown = false;
 
-  const kill = (child: ReturnType<typeof spawn>) => {
-    if (!child || child.killed) return;
-    try {
-      child.kill('SIGTERM');
-    } catch {
-      // ignore
-    }
-  };
-
-  const shutdown = (signal: NodeJS.Signals) => {
+  const shutdown = async (signal: NodeJS.Signals) => {
     if (shuttingDown) return;
     shuttingDown = true;
     console.log(kleur.yellow(`\nReceived ${signal}. Shutting down...`));
-    for (const c of children) kill(c);
+    await Promise.all(
+      children.map(async (c) => {
+        if (!c || c.exitCode !== null) return;
+        await killTree(c.pid);
+      }),
+    );
+    // Don't call process.exit explicitly — once children are killed and the
+    // event loop has nothing left to do, Node exits naturally with the right
+    // code. Calling process.exit during tests breaks vitest.
   };
 
-  process.once('SIGINT', () => shutdown('SIGINT'));
-  process.once('SIGTERM', () => shutdown('SIGTERM'));
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 function createDevReloadServer() {
@@ -462,14 +476,19 @@ export const devCommand = new Command('dev')
       restartable.set(c.appName, { meta: app.meta, dir: app.dir, child: c.child });
     }
 
-    const restartApp = (name: string) => {
+    const restartApp = async (name: string) => {
       const entry = restartable.get(name);
       if (!entry) return;
-      try {
-        entry.child.kill('SIGTERM');
-      } catch {
-        // ignore
-      }
+      const oldPid = entry.child.pid;
+      // Wait for the previous process tree to die before respawning so the
+      // port is actually free — without this, the new dev server can fail with
+      // EADDRINUSE while the old child is still releasing the socket.
+      await killTree(oldPid);
+      // Drop the old child from the tracked list so further signals don't
+      // double-target it.
+      const idx = children.findIndex((c) => c.child === entry.child);
+      if (idx >= 0) children.splice(idx, 1);
+
       const args = ['dev'];
       const env = _devEnvForApp({
         appType: entry.meta.type,
@@ -480,48 +499,70 @@ export const devCommand = new Command('dev')
       });
       const child = run('pnpm', args, entry.dir, env);
       entry.child = child;
+      children.push({ child, appName: entry.meta.name, appType: entry.meta.type });
     };
 
     if (watch) {
-      // Best-effort restart triggers. Avoid optional deps by using fs.watch.
-      const watchPaths = [
-        path.join(workspaceDir, 'mfjs.config.json'),
-        path.join(workspaceDir, 'mfjs.config.ts'),
+      // Use chokidar so recursive watch + de-duped events work consistently
+      // across Linux/macOS/Windows. Map each watched path to the affected app.
+      const watchTargets: Array<{ pattern: string; appName: string | '*' }> = [
+        { pattern: path.join(workspaceDir, 'mfjs.config.json'), appName: '*' },
+        { pattern: path.join(workspaceDir, 'mfjs.config.ts'), appName: '*' },
+        { pattern: path.join(workspaceDir, 'mfjs.config.js'), appName: '*' },
+        { pattern: path.join(workspaceDir, 'mfjs.config.mjs'), appName: '*' },
       ];
       for (const app of appMetas) {
-        watchPaths.push(path.join(app.dir, 'mfjs.app.json'));
-        watchPaths.push(path.join(app.dir, 'mfjs.federation.json'));
-        watchPaths.push(path.join(app.dir, 'mfjs.federation.proxy.json'));
-        watchPaths.push(path.join(app.dir, 'mfjs.routes.json'));
-        watchPaths.push(path.join(app.dir, 'mfjs.routes.host.json'));
-        watchPaths.push(path.join(app.dir, 'rspack.config.mjs'));
-      }
-
-      const lastByPath = new Map<string, number>();
-      const debounceMs = 300;
-      const restartAll = () => {
-        for (const a of appMetas) restartApp(a.meta.name);
-      };
-
-      for (const p of watchPaths) {
-        try {
-          if (!fs.existsSync(p)) continue;
-          fs.watch(p, { persistent: true }, () => {
-            const now = Date.now();
-            const prev = lastByPath.get(p) || 0;
-            if (now - prev < debounceMs) return;
-            lastByPath.set(p, now);
-
-            restartAll();
-          });
-        } catch {
-          // ignore
+        for (const file of [
+          'mfjs.app.json',
+          'mfjs.federation.json',
+          'mfjs.federation.proxy.json',
+          'mfjs.routes.json',
+          'mfjs.routes.host.json',
+          'rspack.config.mjs',
+          'package.json',
+        ]) {
+          watchTargets.push({ pattern: path.join(app.dir, file), appName: app.meta.name });
         }
       }
 
+      const watcher = chokidar.watch(
+        watchTargets.map((t) => t.pattern),
+        {
+          ignoreInitial: true,
+          awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 },
+        },
+      );
+
+      const pending = new Set<string>();
+      let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+      const flush = () => {
+        flushTimer = null;
+        const targets = new Set<string>();
+        for (const changed of pending) {
+          const match = watchTargets.find((t) => path.normalize(t.pattern) === path.normalize(changed));
+          if (!match) continue;
+          if (match.appName === '*') {
+            for (const a of appMetas) targets.add(a.meta.name);
+          } else {
+            targets.add(match.appName);
+          }
+        }
+        pending.clear();
+        for (const name of targets) void restartApp(name);
+      };
+
+      const onChange = (changedPath: string) => {
+        pending.add(changedPath);
+        if (!flushTimer) flushTimer = setTimeout(flush, 250);
+      };
+
+      watcher.on('change', onChange).on('add', onChange).on('unlink', onChange);
+      process.once('exit', () => void watcher.close());
+
       console.log(kleur.cyan('\nWatch mode:'));
-      console.log(kleur.gray('- watching mfjs.config.*, mfjs.*.json, rspack.config.mjs')); 
-      console.log(kleur.gray('- on change: restarting dev servers (best-effort)'));
+      console.log(kleur.gray('- watching mfjs.config.*, mfjs.*.json, rspack.config.mjs, package.json'));
+      console.log(kleur.gray('- on change: restart only the affected app(s)'));
   }
     // Friendly summary.
     if (host) {

@@ -1,63 +1,97 @@
 import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { dirname, join, resolve } from 'node:path';
 import process from 'node:process';
 
-function run(cmd, args, cwd, env) {
-  const child = spawn(cmd, args, {
+const isWindows = process.platform === 'win32';
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+const repoRoot = resolve(__dirname, '..');
+const exampleDir = join(repoRoot, 'examples', 'basic') + '/';
+const cliDist = join(repoRoot, 'packages', 'cli', 'dist', 'index.js');
+
+function spawnChild(cmd, args, cwd, env) {
+  // On Windows, pnpm is a .cmd shim — Node's spawn cannot resolve it without shell.
+  // Rather than turning on shell + risking arg-quoting bugs, swap pnpm → pnpm.cmd directly.
+  const resolvedCmd = isWindows && cmd === 'pnpm' ? 'pnpm.cmd' : cmd;
+  const child = spawn(resolvedCmd, args, {
     cwd,
     stdio: 'inherit',
     shell: false,
-  env: { ...process.env, ...(env || {}) }
+    env: { ...process.env, ...(env || {}) },
   });
   return child;
 }
 
-function kill(child) {
-  if (!child || child.killed) return;
-  try {
-    child.kill('SIGTERM');
-  } catch {
-    // ignore
-  }
+function waitForExit(child) {
+  return new Promise((resolveExit) => {
+    if (!child) return resolveExit(0);
+    child.on('exit', (code, signal) => resolveExit(code ?? (signal ? 143 : 1)));
+    child.on('error', () => resolveExit(1));
+  });
 }
 
-// Keep this opt-in by requiring MFJS_E2E=1.
+async function runAndWait(cmd, args, cwd, env) {
+  const child = spawnChild(cmd, args, cwd, env);
+  const code = await waitForExit(child);
+  if (code !== 0) {
+    throw new Error(`${cmd} ${args.join(' ')} exited ${code}`);
+  }
+  return code;
+}
+
+async function killTree(pid) {
+  if (!pid) return;
+  if (isWindows) {
+    await new Promise((res) => {
+      const k = spawn('taskkill', ['/pid', String(pid), '/T', '/F'], { stdio: 'ignore' });
+      k.on('exit', () => res());
+      k.on('error', () => res());
+    });
+    return;
+  }
+  try {
+    process.kill(-pid, 'SIGTERM');
+  } catch {
+    try { process.kill(pid, 'SIGTERM'); } catch { /* ignore */ }
+  }
+  await new Promise((r) => setTimeout(r, 1500));
+  try { process.kill(pid, 'SIGKILL'); } catch { /* ignore */ }
+}
+
+async function killChild(child) {
+  if (!child || child.exitCode !== null) return;
+  await killTree(child.pid);
+  await waitForExit(child);
+}
+
 if (process.env.MFJS_E2E !== '1') {
   console.log('MFJS e2e is opt-in. Set MFJS_E2E=1 to run.');
   process.exit(0);
 }
 
-const exampleDir = new URL('../examples/basic/', import.meta.url).pathname;
-
-const repoRoot = new URL('../', import.meta.url).pathname;
-
-const children = [];
+const longRunning = [];
 let exitCode = 0;
 
 try {
-  // Ensure local workspace packages are built so app dev servers don't pick up stale dist/.
-  children.push(run('pnpm', ['-C', new URL('../packages/cli/', import.meta.url).pathname, 'build'], process.cwd()));
-  children.push(run('pnpm', ['-C', new URL('../libs/runtime/', import.meta.url).pathname, 'build'], process.cwd()));
-  children.push(run('pnpm', ['-C', new URL('../libs/event-bus/', import.meta.url).pathname, 'build'], process.cwd()));
-  children.push(run('pnpm', ['-C', new URL('../libs/events/', import.meta.url).pathname, 'build'], process.cwd()));
-  children.push(run('pnpm', ['-C', new URL('../libs/state/', import.meta.url).pathname, 'build'], process.cwd()));
-  children.push(run('pnpm', ['-C', new URL('../libs/types/', import.meta.url).pathname, 'build'], process.cwd()));
+  console.log('=== Build phase: workspace libraries ===');
+  // Sequential to keep terminal output sane and avoid race on tsc output dirs in CI.
+  await runAndWait('pnpm', ['-C', join(repoRoot, 'packages', 'cli'), 'build'], repoRoot);
+  await Promise.all([
+    runAndWait('pnpm', ['-C', join(repoRoot, 'libs', 'runtime'), 'build'], repoRoot),
+    runAndWait('pnpm', ['-C', join(repoRoot, 'libs', 'event-bus'), 'build'], repoRoot),
+    runAndWait('pnpm', ['-C', join(repoRoot, 'libs', 'events'), 'build'], repoRoot),
+    runAndWait('pnpm', ['-C', join(repoRoot, 'libs', 'state'), 'build'], repoRoot),
+    runAndWait('pnpm', ['-C', join(repoRoot, 'libs', 'types'), 'build'], repoRoot),
+  ]);
 
-  // Ensure federation configs exist.
-  children.push(run('pnpm', ['-C', exampleDir, 'federation'], process.cwd()));
+  console.log('=== Generate federation + routes manifests ===');
+  await runAndWait('pnpm', ['-C', exampleDir, 'federation'], repoRoot);
+  await runAndWait('node', [cliDist, 'routes', '--dir', exampleDir], repoRoot);
 
-  // Ensure routing manifests exist (host + remote routes module).
-  children.push(run('node', [new URL('../packages/cli/dist/index.js', import.meta.url).pathname, 'routes', '--dir', exampleDir], process.cwd()));
-} catch (e) {
-  console.error(e);
-}
-
-// In proxy mode, the host expects a proxy federation file.
-// The mfjs federation generator doesn't write this (it's written by `mfjs dev --proxy-remotes`),
-// so we create it here for the controlled example.
-try {
+  // Build the proxy federation file the on-demand/proxy scenarios use.
   const { writeFileSync, readFileSync, existsSync } = await import('node:fs');
-  const { join } = await import('node:path');
-  const shellDir = join(exampleDir, 'apps/shell');
+  const shellDir = join(exampleDir, 'apps', 'shell');
   const basePath = join(shellDir, 'mfjs.federation.json');
   if (existsSync(basePath)) {
     const cfg = JSON.parse(readFileSync(basePath, 'utf8'));
@@ -67,96 +101,76 @@ try {
     writeFileSync(join(shellDir, 'mfjs.federation.proxy.json'), JSON.stringify(cfg, null, 2) + '\n', 'utf8');
   }
 } catch (e) {
-  console.error('Failed to write mfjs.federation.proxy.json:', e);
+  console.error('Build/generate phase failed:', e?.message ?? e);
+  process.exit(1);
 }
 
-async function waitFor(urls) {
-  const waitOn = run(
+async function waitForUrls(urls) {
+  const waitOn = spawnChild(
     'pnpm',
     ['-w', 'exec', '--', 'wait-on', '-t', '60000', ...urls],
-    process.cwd()
+    repoRoot,
   );
-  children.push(waitOn);
-
-  await new Promise((resolve) =>
-    waitOn.on('exit', (code) => {
-      exitCode = code ?? 1;
-      resolve();
-    })
-  );
+  const code = await waitForExit(waitOn);
+  if (code !== 0) throw new Error(`wait-on exited ${code}`);
 }
 
 async function runPlaywright(grep) {
   const args = ['-w', 'exec', '--', 'playwright', 'test'];
   if (grep) args.push('--grep', grep);
-  const pw = run('pnpm', args, process.cwd(), { PW_TEST_HTML_REPORT_OPEN: 'never' });
-  children.push(pw);
-  await new Promise((resolve) =>
-    pw.on('exit', (code) => {
-      exitCode = code ?? 1;
-      resolve();
-    })
-  );
+  const pw = spawnChild('pnpm', args, repoRoot, { PW_TEST_HTML_REPORT_OPEN: 'never' });
+  const code = await waitForExit(pw);
+  if (code !== 0) throw new Error(`playwright exited ${code}`);
 }
 
 async function runScenario(name, opts) {
   console.log(`\n=== Scenario: ${name} ===`);
-
-  // Start processes based on scenario.
-  // - direct/proxy: start remote + host directly
-  // - on-demand: start only the orchestrator and let it spawn remotes
   const startRemoteDirectly = opts.mode !== 'on-demand';
+  const localChildren = [];
 
-  if (startRemoteDirectly) {
-    const remote = run('pnpm', ['-C', `${exampleDir}apps/dashboard`, 'dev'], process.cwd());
-    children.push(remote);
+  try {
+    if (startRemoteDirectly) {
+      localChildren.push(
+        spawnChild('pnpm', ['-C', join(exampleDir, 'apps', 'dashboard'), 'dev'], repoRoot),
+      );
+    }
+
+    const hostEnv = {};
+    if (opts.mode === 'proxy') hostEnv.MFJS_FEDERATION_FILE = 'mfjs.federation.proxy.json';
+
+    if (opts.mode === 'on-demand') {
+      localChildren.push(
+        spawnChild(
+          'node',
+          [cliDist, 'dev', '--dir', exampleDir, '--proxy-remotes', '--on-demand'],
+          repoRoot,
+          hostEnv,
+        ),
+      );
+    } else {
+      localChildren.push(
+        spawnChild('pnpm', ['-C', join(exampleDir, 'apps', 'shell'), 'dev'], repoRoot, hostEnv),
+      );
+    }
+
+    longRunning.push(...localChildren);
+
+    const urls = ['http://localhost:3000'];
+    if (opts.mode !== 'on-demand') urls.push('http://localhost:3001/remoteEntry.js');
+    if (opts.mode !== 'direct')
+      urls.push('http://localhost:3000/mfjs/remotes/dashboard/remoteEntry.js');
+
+    console.log('Waiting for dev servers...');
+    await waitForUrls(urls);
+    console.log('Dev servers are up. Running Playwright...');
+    await runPlaywright(opts.grep);
+  } finally {
+    for (const child of localChildren) await killChild(child);
+    // Drop killed children from longRunning.
+    for (let i = longRunning.length - 1; i >= 0; i--) {
+      if (localChildren.includes(longRunning[i])) longRunning.splice(i, 1);
+    }
   }
-
-  const hostEnv = {};
-
-  if (opts.mode === 'proxy') {
-    hostEnv.MFJS_FEDERATION_FILE = 'mfjs.federation.proxy.json';
-  }
-
-  if (opts.mode === 'on-demand') {
-    // Use the CLI orchestrator so it can start remotes lazily.
-    // We also use proxy-remotes so the host requests go through the starter hook.
-    const orchestrator = run(
-      'node',
-      [
-        new URL('../packages/cli/dist/index.js', import.meta.url).pathname,
-        'dev',
-        '--dir',
-        exampleDir,
-        '--proxy-remotes',
-        '--on-demand'
-      ],
-      repoRoot,
-      hostEnv
-    );
-    children.push(orchestrator);
-  } else {
-    const host = run('pnpm', ['-C', `${exampleDir}apps/shell`, 'dev'], process.cwd(), hostEnv);
-    children.push(host);
-  }
-
-  const urls = ['http://localhost:3000'];
-  if (opts.mode !== 'on-demand') {
-    // Remote entry is expected to be reachable.
-    urls.push('http://localhost:3001/remoteEntry.js');
-  }
-  if (opts.mode !== 'direct') urls.push('http://localhost:3000/mfjs/remotes/dashboard/remoteEntry.js');
-
-  console.log('Waiting for dev servers...');
-  await waitFor(urls);
-  if (exitCode !== 0) throw new Error('wait-on failed');
-
-  console.log('Dev servers are up. Running Playwright...');
-  await runPlaywright(opts.grep);
-  if (exitCode !== 0) throw new Error('playwright failed');
-
-  // Clean up between scenarios.
-  children.splice(0).forEach(kill);
 }
 
 try {
@@ -164,16 +178,25 @@ try {
   await runScenario('proxy-remotes', { mode: 'proxy', grep: '@proxy' });
   await runScenario('on-demand', { mode: 'on-demand', grep: '@ondemand' });
 
-  // Run build output tests (no dev server needed — reads dist/ directly).
   console.log('\n=== Scenario: build-output ===');
-  console.log('Running production builds...');
-  run('pnpm', ['-C', `${exampleDir}apps/dashboard`, 'build'], process.cwd(), { NODE_ENV: 'production' });
-  run('pnpm', ['-C', `${exampleDir}apps/shell`, 'build'], process.cwd(), { NODE_ENV: 'production' });
+  await runAndWait(
+    'pnpm',
+    ['-C', join(exampleDir, 'apps', 'dashboard'), 'build'],
+    repoRoot,
+    { NODE_ENV: 'production' },
+  );
+  await runAndWait(
+    'pnpm',
+    ['-C', join(exampleDir, 'apps', 'shell'), 'build'],
+    repoRoot,
+    { NODE_ENV: 'production' },
+  );
   await runPlaywright('@build');
-
-  process.exit(0);
-} catch (e) {
-  console.error(e);
-  children.forEach(kill);
-  process.exit(exitCode || 1);
+} catch (err) {
+  console.error('Scenario failure:', err?.message ?? err);
+  exitCode = exitCode || 1;
+} finally {
+  for (const child of longRunning) await killChild(child);
 }
+
+process.exit(exitCode);

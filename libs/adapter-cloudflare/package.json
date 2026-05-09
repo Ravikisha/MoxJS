@@ -2,11 +2,24 @@
   "name": "@mfjs/adapter-cloudflare",
   "version": "0.1.0",
   "description": "Cloudflare Pages / Workers deployment adapter for MFJS.",
+  "license": "MIT",
+  "homepage": "https://github.com/anthropics/MFJS#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/MFJS.git",
+    "directory": "libs/adapter-cloudflare"
+  },
+  "keywords": ["mfjs", "cloudflare", "workers", "edge", "ssr", "module-federation"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "publishConfig": { "access": "public" },
-  "files": ["dist", "templates", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "templates", "README.md", "LICENSE"],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },

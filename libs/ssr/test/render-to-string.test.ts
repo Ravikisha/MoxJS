@@ -99,11 +99,11 @@ describe('injectIntoTemplate', () => {
     );
   });
 
-  it('replaces only the first occurrence of the placeholder', () => {
+  it('replaces every occurrence of the placeholder (replaceAll semantics)', () => {
     const doubleTemplate = `<html><body><!--ssr-outlet--><!--ssr-outlet--></body></html>`;
     const result = injectIntoTemplate(doubleTemplate, 'X');
-    expect(result).toContain('X');
-    // Second placeholder should still be present after first replacement.
-    expect(result).toContain('<!--ssr-outlet-->');
+    // Both placeholders are replaced — the previous behaviour leaked the
+    // literal comment through, which would surface in the rendered HTML.
+    expect(result).toBe('<html><body>XX</body></html>');
   });
 });

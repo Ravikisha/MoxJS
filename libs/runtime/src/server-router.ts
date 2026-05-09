@@ -1,41 +1,17 @@
 /**
  * @mfjs/runtime — server-side router utilities
  *
- * The main `router.ts` uses `window` / `history` and is browser-only.
- * This module provides a minimal server-side router that:
- *
- * - Holds a fixed `path` (set once per request)
- * - Exposes the same `getPath()` / `subscribe()` / `navigate()` / `destroy()` interface
- * - Is safe to import in Node.js (no `window` / `document` references)
- *
- * @example
- * ```ts
- * import { createServerRouter, setServerPath } from '@mfjs/runtime/server';
- *
- * // In your SSR request handler:
- * const router = createServerRouter('/dashboard/settings');
- * // ... render ...
- * router.destroy();
- * ```
+ * The browser router (`router.ts`) uses `window` / `history`. This module
+ * provides a minimal request-scoped router safe for SSR. **Do not** rely on a
+ * process-level singleton in concurrent SSR — create one router per request
+ * with `createServerRouter(path)` (or `withServerRouter(path, fn)` for
+ * AsyncLocalStorage scoping when available).
  */
 
 import type { Router, NavigateDetail, RouterOptions } from './router.js';
 
 export type { Router, RouterOptions };
 
-// ── ServerRouter ──────────────────────────────────────────────────────────────
-
-/**
- * Create a minimal server-side `Router` that does not reference `window`.
- *
- * - `getPath()` always returns the initial `path`.
- * - `subscribe(cb)` calls `cb(path)` immediately (one-shot, no reactivity).
- * - `navigate()` is a no-op on the server (logs in development).
- * - `destroy()` clears subscribers.
- *
- * @param path  The request pathname, e.g. `"/dashboard/settings"`.
- * @param opts  Unused on the server; accepted for API symmetry with `createRouter`.
- */
 export function createServerRouter(path: string, _opts: RouterOptions = {}): Router {
   const subs = new Set<(p: string) => void>();
   let currentPath = path;
@@ -50,11 +26,8 @@ export function createServerRouter(path: string, _opts: RouterOptions = {}): Rou
       return () => subs.delete(cb);
     },
     navigate(detail: NavigateDetail) {
-      // Server-side navigation is a no-op. In development, log so developers
-      // notice if component code inadvertently calls navigate() during SSR.
-      // Still update the in-memory path so tests / multi-render pipelines work.
       currentPath = detail.to;
-      for (const cb of subs) cb(currentPath);
+      for (const cb of [...subs]) cb(currentPath);
     },
     destroy() {
       subs.clear();
@@ -62,32 +35,87 @@ export function createServerRouter(path: string, _opts: RouterOptions = {}): Rou
   };
 }
 
-// ── getServerRouter / setServerPath ──────────────────────────────────────────
+// ── AsyncLocalStorage-backed request scope ─────────────────────────────────
 
-let _serverRouter: Router | null = null;
+type RouterStorage = {
+  getStore(): Router | undefined;
+  run<T>(router: Router, fn: () => T): T;
+};
+
+let als: RouterStorage | null = null;
+let alsLoadAttempted = false;
+
+async function loadAls(): Promise<RouterStorage | null> {
+  if (alsLoadAttempted) return als;
+  alsLoadAttempted = true;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment
+    const { AsyncLocalStorage } = await import(
+      // Using a string literal would have rspack/edge bundlers pull `node:async_hooks`
+      // into edge bundles. The dynamic specifier keeps the import lazy.
+      /* @vite-ignore */ 'node:async_hooks' as string
+    );
+    type AlsCtor = new () => {
+      getStore(): Router | undefined;
+      run<T>(router: Router, fn: () => T): T;
+    };
+    const Ctor = AsyncLocalStorage as AlsCtor;
+    const store = new Ctor();
+    als = {
+      getStore: () => store.getStore(),
+      run: (router, fn) => store.run(router, fn),
+    };
+  } catch {
+    als = null;
+  }
+  return als;
+}
 
 /**
- * Get (or lazily create) a process-level server router singleton.
- *
- * ⚠️  Not safe for concurrent requests in the same process without
- * request-scoped router management.  For concurrent SSR, create a new router
- * per request via `createServerRouter(path)`.
+ * Run `fn` with a per-request router available via `getServerRouter()`.
+ * Falls back to passing the router to `fn` directly when AsyncLocalStorage
+ * is unavailable (edge runtimes).
  */
-export function getServerRouter(path = '/'): Router {
-  if (!_serverRouter) {
-    _serverRouter = createServerRouter(path);
+export async function withServerRouter<T>(
+  path: string,
+  fn: (router: Router) => T | Promise<T>,
+): Promise<T> {
+  const router = createServerRouter(path);
+  try {
+    const storage = await loadAls();
+    if (storage) {
+      return await storage.run(router, () => fn(router));
+    }
+    return await fn(router);
+  } finally {
+    router.destroy();
   }
-  return _serverRouter;
 }
 
-/** Replace the server router singleton path. Useful for single-threaded test environments. */
+/**
+ * Get the current request-scoped server router, or fall back to a process
+ * singleton when no scope is active.
+ *
+ * ⚠️ Concurrent SSR without `withServerRouter` will mix requests in the
+ * fallback singleton. Always prefer `withServerRouter`.
+ */
+let _fallbackRouter: Router | null = null;
+
+export function getServerRouter(path = '/'): Router {
+  const scoped = als?.getStore();
+  if (scoped) return scoped;
+  if (!_fallbackRouter) _fallbackRouter = createServerRouter(path);
+  return _fallbackRouter;
+}
+
+/** Replace the fallback singleton. Tests / single-threaded environments only. */
 export function setServerPath(path: string): void {
-  _serverRouter?.destroy();
-  _serverRouter = createServerRouter(path);
+  _fallbackRouter?.destroy();
+  _fallbackRouter = createServerRouter(path);
 }
 
-/** Reset the server router singleton. */
+/** @internal */
 export function _resetServerRouter(): void {
-  _serverRouter?.destroy();
-  _serverRouter = null;
+  _fallbackRouter?.destroy();
+  _fallbackRouter = null;
 }

@@ -4,10 +4,8 @@
  * Provides:
  *   useRouter()     — access the singleton Router instance
  *   usePathname()   — reactive current pathname string
- *   NavLink         — <NavLink to="/path" label="..." /> with active highlighting
+ *   NavLink         — navigation link with active highlighting
  *   RemoteOutlet    — renders the matched federated remote for the current pathname
- *
- * All components are framework-agnostic at the core; React is a peer dependency.
  */
 
 import React from 'react';
@@ -15,83 +13,67 @@ import { createRouter, dispatchMfjsNavigate, type Router, type RouterOptions } f
 import { resolveRoute, type RouteTarget, type ResolvedRoute } from './routes.js';
 import { ErrorBoundary } from './error-boundary.js';
 import { prefetchRoute } from './prefetch.js';
+import { matchPath } from './route-matcher.js';
 import type { FederationRemote } from './remote-loader.js';
 
-// ── Singleton router ──────────────────────────────────────────────────────────
+// ── Singleton router (pinned to globalThis for MF-singleton survival) ──────
 
-// A single router instance shared across the whole host app.
-// Created lazily on first access so it is safe to import on the server or in
-// test environments where `window` may not exist.
-let _router: Router | null = null;
+const ROUTER_KEY = '__MFJS_ROUTER_SINGLETON__';
+type GlobalWithRouter = typeof globalThis & { [ROUTER_KEY]?: Router };
 
-/** Return (and lazily create) the singleton app-level router. */
 export function getRouter(opts?: RouterOptions): Router {
-  if (!_router) {
-    _router = createRouter(opts);
-  }
-  return _router;
+  const g = globalThis as GlobalWithRouter;
+  if (!g[ROUTER_KEY]) g[ROUTER_KEY] = createRouter(opts);
+  return g[ROUTER_KEY];
 }
 
-/**
- * Reset the singleton router. Useful in tests.
- * @internal
- */
+/** @internal */
 export function _resetRouter() {
-  _router?.destroy();
-  _router = null;
+  const g = globalThis as GlobalWithRouter;
+  g[ROUTER_KEY]?.destroy();
+  delete g[ROUTER_KEY];
 }
 
-// ── Hooks ─────────────────────────────────────────────────────────────────────
+// ── Hooks ──────────────────────────────────────────────────────────────────
 
-/** Returns the singleton Router instance. */
 export function useRouter(): Router {
   return getRouter();
 }
 
-/**
- * Returns the current pathname, updating reactively on every navigation.
- * Uses the singleton router — safe to call in both host and remote components.
- */
+const isBrowser = typeof window !== 'undefined';
+
 export function usePathname(): string {
   const router = getRouter();
-  const [pathname, setPathname] = React.useState(
-    () => new URL(router.getPath(), 'http://mfjs.local').pathname
-  );
+  const [pathname, setPathname] = React.useState(() => {
+    if (!isBrowser) return '/';
+    try {
+      return new URL(router.getPath(), 'http://mfjs.local').pathname;
+    } catch {
+      return '/';
+    }
+  });
 
   React.useEffect(() => {
-    // Subscribe — callback fires with the full path string on every navigation.
     const unsub = router.subscribe((path) => {
       const p = new URL(path, 'http://mfjs.local').pathname;
       setPathname(p);
     });
-    return unsub; // Just unsubscribe; don't destroy the router's window listeners.
+    return unsub;
   }, [router]);
 
   return pathname;
 }
 
-// ── NavLink ───────────────────────────────────────────────────────────────────
+// ── NavLink ────────────────────────────────────────────────────────────────
 
 export type NavLinkProps = {
-  /** Target pathname, e.g. "/dashboard/settings" or "/" */
   to: string;
-  /** Link label text */
   label: string;
-  /**
-   * Current pathname — drives the active highlight.
-   * Defaults to `usePathname()` so you can omit it inside a MfjsShell tree.
-   */
   currentPath?: string;
-  /** Extra CSS class applied to the <a> element. */
   className?: string;
   style?: React.CSSProperties;
   activeStyle?: React.CSSProperties;
   children?: React.ReactNode;
-  /**
-   * Prefetch the target remote on hover / focus / touch.
-   * `true` uses the NavLinkPrefetchProvider context; pass an explicit config to
-   * override.
-   */
   prefetch?: boolean | NavLinkPrefetchConfig;
 };
 
@@ -112,10 +94,15 @@ export function NavLinkPrefetchProvider({
   return <PrefetchContext.Provider value={config}>{children}</PrefetchContext.Provider>;
 }
 
-/**
- * A navigation link that dispatches `mfjs:navigate` instead of causing a full
- * page reload. Highlights when the current path matches `to`.
- */
+const NAV_LINK_DEFAULT_STYLE: React.CSSProperties = {
+  color: 'white',
+  textDecoration: 'none',
+  padding: '6px 12px',
+  borderRadius: 4,
+  marginLeft: 8,
+  cursor: 'pointer',
+};
+
 export function NavLink({
   to,
   label,
@@ -130,9 +117,15 @@ export function NavLink({
   const currentPath = currentPathProp ?? pathname;
   const contextPrefetch = React.useContext(PrefetchContext);
 
-  const cleanTo = to.replace('/*', '');
+  // Strip wildcard suffixes; reject mid-pattern stars by treating only `/*`
+  // suffix as removable. Pattern like `/a/*/b` becomes `/a/*/b` literal which
+  // won't startsWith-match the actual path — desired behavior.
+  const cleanTo = to.endsWith('/*') ? to.slice(0, -2) || '/' : to;
+  // Use a `+ '/'` boundary so `/foo` doesn't match `/foobar`.
   const isActive =
-    cleanTo === '/' ? currentPath === '/' : currentPath.startsWith(cleanTo);
+    cleanTo === '/'
+      ? currentPath === '/'
+      : currentPath === cleanTo || currentPath.startsWith(cleanTo + '/');
 
   const testId =
     'nav-' +
@@ -141,16 +134,14 @@ export function NavLink({
       .replace(/^-/, '')
       .replace(/-$/, '') || 'home');
 
-  const defaultStyle: React.CSSProperties = {
-    color: 'white',
-    textDecoration: 'none',
-    padding: '6px 12px',
-    borderRadius: 4,
-    background: isActive ? 'rgba(255,255,255,0.2)' : 'transparent',
-    marginLeft: 8,
-    fontWeight: isActive ? 700 : 400,
-    cursor: 'pointer',
-  };
+  const dynamicStyle: React.CSSProperties = React.useMemo(
+    () => ({
+      ...NAV_LINK_DEFAULT_STYLE,
+      background: isActive ? 'rgba(255,255,255,0.2)' : 'transparent',
+      fontWeight: isActive ? 700 : 400,
+    }),
+    [isActive],
+  );
 
   const prefetchConfig: NavLinkPrefetchConfig | null =
     prefetch === true
@@ -169,7 +160,7 @@ export function NavLink({
       data-testid={testId}
       href={cleanTo || '/'}
       className={className}
-      style={{ ...defaultStyle, ...(style ?? {}), ...(isActive ? (activeStyle ?? {}) : {}) }}
+      style={{ ...dynamicStyle, ...(style ?? {}), ...(isActive ? (activeStyle ?? {}) : {}) }}
       onClick={(e) => {
         e.preventDefault();
         dispatchMfjsNavigate({ to: cleanTo || '/' });
@@ -183,123 +174,136 @@ export function NavLink({
   );
 }
 
-// ── RemoteOutlet ──────────────────────────────────────────────────────────────
+// ── RemoteOutlet ───────────────────────────────────────────────────────────
 
 export type RemoteOutletProps = {
-  /**
-   * Host-level route table. Example:
-   * ```ts
-   * [
-   *   { path: '/dashboard/*', remote: 'dashboard', module: './App' },
-   *   { path: '/',            remote: 'dashboard', module: './App' },
-   * ]
-   * ```
-   */
   routes: RouteTarget[];
-
-  /**
-   * Map of remote name → async importer function.
-   * Each function must return a module with a `default` React component.
-   *
-   * Example:
-   * ```ts
-   * { dashboard: () => import('dashboard/App') }
-   * ```
-   */
   remotes: Record<string, () => Promise<{ default: React.ComponentType<{ subpath?: string }> }>>;
-
-  /** Rendered while the remote module is loading. Defaults to a simple <p>. */
   fallback?: React.ReactNode;
-
-  /** Rendered when no route matches. Defaults to a 404 paragraph. */
   noMatch?: React.ReactNode;
+  /** LRU max size for the remote-component cache. Default 32. */
+  cacheMax?: number;
 };
 
-/** Derive the subpath to forward to the remote from wildcard route params. */
 function getSubpath(params: Record<string, string>): string {
   const wildcard = params['*'];
   if (wildcard == null) return '/';
   return wildcard.startsWith('/') ? wildcard : `/${wildcard}`;
 }
 
-/**
- * Renders the federated remote component that matches the current pathname.
- *
- * - Resolves the current path against `routes`
- * - Loads the remote module via the corresponding `remotes[name]()` importer
- * - Caches the module by `(remote, module)` key — avoids re-fetching on navigation
- * - Passes the matched `subpath` (e.g. `/settings`) to the remote component
- */
+// Module-level LRU cache shared across all RemoteOutlet instances. Two
+// outlets on the same page therefore dedupe imports.
+class LRU<K, V> {
+  private map = new Map<K, V>();
+  constructor(private max: number) {}
+  get(k: K): V | undefined {
+    const v = this.map.get(k);
+    if (v !== undefined) {
+      this.map.delete(k);
+      this.map.set(k, v);
+    }
+    return v;
+  }
+  set(k: K, v: V): void {
+    if (this.map.has(k)) this.map.delete(k);
+    this.map.set(k, v);
+    while (this.map.size > this.max) {
+      const first = this.map.keys().next().value;
+      if (first === undefined) break;
+      this.map.delete(first);
+    }
+  }
+}
+
+const REMOTE_CACHE_KEY = '__MFJS_REMOTE_OUTLET_CACHE__';
+type GlobalWithRemoteCache = typeof globalThis & {
+  [REMOTE_CACHE_KEY]?: LRU<string, React.ComponentType<{ subpath?: string }>>;
+};
+
+function getRemoteCache(max: number): LRU<string, React.ComponentType<{ subpath?: string }>> {
+  const g = globalThis as GlobalWithRemoteCache;
+  if (!g[REMOTE_CACHE_KEY]) g[REMOTE_CACHE_KEY] = new LRU(max);
+  return g[REMOTE_CACHE_KEY];
+}
+
 export function RemoteOutlet({
   routes,
   remotes,
   fallback,
   noMatch,
+  cacheMax = 32,
 }: RemoteOutletProps) {
   const pathname = usePathname();
 
   const resolved: ResolvedRoute | null = React.useMemo(
     () => resolveRoute(routes, pathname),
-    [routes, pathname]
+    [routes, pathname],
   );
 
   const remoteKey = resolved
     ? `${resolved.target.remote}::${resolved.target.module ?? './App'}`
     : null;
 
-  const cacheRef = React.useRef<Map<string, React.ComponentType<{ subpath?: string }>>>(new Map());
-
   const [Remote, setRemote] = React.useState<React.ComponentType<{ subpath?: string }> | null>(null);
-  const [error, setError]   = React.useState<string | null>(null);
+  const [error, setError] = React.useState<string | null>(null);
   const [loading, setLoading] = React.useState(true);
 
   const subpath = resolved ? getSubpath(resolved.params) : '/';
 
+  // Stash the latest `remotes` map in a ref so the effect's deps stay narrow
+  // (just remoteKey) — without this, every parent render that re-creates the
+  // map triggers a re-import.
+  const remotesRef = React.useRef(remotes);
+  React.useEffect(() => { remotesRef.current = remotes; }, [remotes]);
+
   React.useEffect(() => {
+    setError(null);
     if (!resolved || !remoteKey) {
       setRemote(null);
       setLoading(false);
       return;
     }
 
-    const cached = cacheRef.current.get(remoteKey);
+    const cache = getRemoteCache(cacheMax);
+    const cached = cache.get(remoteKey);
     if (cached) {
       setRemote(() => cached);
       setLoading(false);
       return;
     }
 
-    let cancelled = false;
     setLoading(true);
-    setError(null);
 
-    const importer = remotes[resolved.target.remote];
+    const importer = remotesRef.current[resolved.target.remote];
     if (!importer) {
       setError(`No importer registered for remote "${resolved.target.remote}"`);
       setLoading(false);
       return;
     }
 
+    const controller = new AbortController();
+    const { signal } = controller;
+
     importer()
       .then((m) => {
-        if (!cancelled) {
-          cacheRef.current.set(remoteKey, m.default);
-          setRemote(() => m.default);
-          setLoading(false);
-        }
+        if (signal.aborted) return;
+        cache.set(remoteKey, m.default);
+        setRemote(() => m.default);
+        setLoading(false);
       })
       .catch((e: unknown) => {
-        if (!cancelled) {
-          setError(e instanceof Error ? e.message : String(e));
-          setLoading(false);
-        }
+        if (signal.aborted) return;
+        setError(e instanceof Error ? e.message : String(e));
+        setLoading(false);
       });
 
-    return () => { cancelled = true; };
-  }, [remoteKey]); // Re-fetch only when the remote identity changes
+    return () => {
+      controller.abort();
+    };
+  }, [remoteKey, cacheMax, resolved]);
 
   if (loading) return <>{fallback ?? <p data-testid="loading-remote" style={{ color: '#888' }}>Loading remote…</p>}</>;
-  if (error)   return <pre style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>{error}</pre>;
+  if (error) return <pre style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>{error}</pre>;
   if (!Remote) return <>{noMatch ?? <p style={{ color: '#888' }}>404 — No route matched.</p>}</>;
 
   return (
@@ -318,80 +322,63 @@ export function RemoteOutlet({
   );
 }
 
-// ── RemoteApp (remote-side page router) ──────────────────────────────────────
+// ── RemoteApp ───────────────────────────────────────────────────────────────
 
 export type RemoteAppProps = {
-  /**
-   * Subpath relative to this remote's base, e.g. "/" or "/settings" or "/users/42".
-   * Passed in by the host's RemoteOutlet.
-   */
   subpath?: string;
-
-  /**
-   * File-based route table for this remote. Example:
-   * ```ts
-   * import { pages } from './mfjs.routes.js';
-   * ```
-   */
   pages: Array<{
     path: string;
-    load: () => Promise<{ default: React.ComponentType<any> }>;
+    load: () => Promise<{ default: React.ComponentType<{ params?: Record<string, string> }> }>;
   }>;
-
-  /** Rendered while the page module is loading. */
   fallback?: React.ReactNode;
-
-  /** Rendered when `subpath` matches no page. Wraps in `data-testid="remote-loaded"`. */
   noMatch?: React.ReactNode;
 };
 
-/**
- * Drop-in root component for a federated remote.
- *
- * Resolves `subpath` against `pages`, lazy-loads the matching page component,
- * and renders it inside a `data-testid="remote-loaded"` wrapper.
- */
 export function RemoteApp({ subpath = '/', pages, fallback, noMatch }: RemoteAppProps) {
-  const [Component, setComponent] = React.useState<React.ComponentType<any> | null>(null);
-  const [params, setParams]       = React.useState<Record<string, string>>({});
-  const [error, setError]         = React.useState<string | null>(null);
-  const [loading, setLoading]     = React.useState(true);
+  const [Component, setComponent] = React.useState<React.ComponentType<{ params?: Record<string, string> }> | null>(null);
+  const [params, setParams] = React.useState<Record<string, string>>({});
+  const [error, setError] = React.useState<string | null>(null);
+  const [loading, setLoading] = React.useState(true);
+
+  // Stable pages reference. We hash the pattern list so unrelated parent
+  // re-renders that pass a fresh array don't restart the load.
+  const pagesKey = React.useMemo(() => pages.map((p) => p.path).join('|'), [pages]);
+  const pagesRef = React.useRef(pages);
+  React.useEffect(() => { pagesRef.current = pages; }, [pages]);
 
   React.useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
+    const { signal } = controller;
     setLoading(true);
     setError(null);
 
     (async () => {
       const normalized = subpath.startsWith('/') ? subpath : `/${subpath}`;
-      for (const p of pages) {
-        const { matchPath } = await import('./route-matcher.js');
+      for (const p of pagesRef.current) {
         const m = matchPath(p.path, normalized);
         if (!m) continue;
         const mod = await p.load();
-        if (!cancelled) {
-          setComponent(() => mod.default);
-          setParams(m.params);
-          setLoading(false);
-        }
+        if (signal.aborted) return;
+        setComponent(() => mod.default);
+        setParams(m.params);
+        setLoading(false);
         return;
       }
-      if (!cancelled) {
+      if (!signal.aborted) {
         setComponent(null);
         setLoading(false);
       }
     })().catch((e: unknown) => {
-      if (!cancelled) {
-        setError(e instanceof Error ? e.message : String(e));
-        setLoading(false);
-      }
+      if (signal.aborted) return;
+      setError(e instanceof Error ? e.message : String(e));
+      setLoading(false);
     });
 
-    return () => { cancelled = true; };
-  }, [subpath, pages]);
+    return () => { controller.abort(); };
+  }, [subpath, pagesKey]);
 
   if (loading) return <>{fallback ?? <p data-testid="loading-page" style={{ color: '#888' }}>Loading page…</p>}</>;
-  if (error)   return <pre style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>{error}</pre>;
+  if (error) return <pre style={{ color: 'crimson', whiteSpace: 'pre-wrap' }}>{error}</pre>;
 
   return (
     <div

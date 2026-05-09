@@ -1,69 +1,9 @@
 /**
- * @mfjs/ssr — public API
+ * @mfjs/ssr — public API.
+ *
+ * For Cloudflare Workers / Vercel Edge / Deno Deploy, import the edge-only
+ * surface (`@mfjs/ssr/edge`) instead — that bundle excludes `node:stream` and
+ * `node:fs/promises` so it loads cleanly under non-Node runtimes.
  */
 
-// Types
-export type {
-  SsrRoute,
-  SsrRenderResult,
-  StaticPage,
-  StaticExportOptions,
-  EdgeRequest,
-  EdgeResponse,
-  EdgeAdapterHandler,
-  EdgeAdapterOptions,
-} from './types.js';
-
-// Render-to-string (sync, for static export and edge adapters)
-export { renderRouteToString, injectIntoTemplate } from './render-to-string.js';
-
-// Streaming SSR (Node.js streams)
-export {
-  renderRouteToStream,
-  collectStream,
-  type StreamRenderResult,
-} from './render-to-stream.js';
-
-// Static export (pre-render all routes to HTML files)
-export { staticExport } from './static-export.js';
-
-// Edge adapter (platform-agnostic SSR handler)
-export { createEdgeAdapter } from './edge-adapter.js';
-
-// Remote SSR compatibility
-export {
-  ssrLoadRemote,
-  ssrRenderRemote,
-  createSsrRemoteOutlet,
-  type SsrRemoteOptions,
-  type SsrRenderRemoteOptions,
-  type SsrRemoteOutletConfig,
-} from './remote-ssr.js';
-
-// Route utilities
-export { matchRoutePath, type SsrRouteMatch } from './route-utils.js';
-
-// Redirects
-export { redirect, isRedirect, SsrRedirect } from './redirect.js';
-
-// State hydration
-export {
-  serializeState,
-  hydrateState,
-  clearHydratedState,
-  type SerializeStateOptions,
-} from './state-hydration.js';
-
-// Preload links
-export { buildPreloadTags, remoteEntryPreloads, type PreloadLink } from './preload.js';
-
-// Cache headers
-export {
-  cacheControl,
-  buildWeakEtag,
-  ifNoneMatchHit,
-  type CacheControlOptions,
-} from './cache-headers.js';
-
-// Edge adapter options
-export type { EdgeAdapterExtraOptions } from './edge-adapter.js';
+export * from './node.js';

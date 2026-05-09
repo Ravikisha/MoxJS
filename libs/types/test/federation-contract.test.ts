@@ -64,48 +64,48 @@ describe('validateFederationContract', () => {
     exposes: { './App': null as unknown as object },
   });
 
-  it('returns empty array for a valid container', () => {
+  it('returns empty array for a valid container', async () => {
     const container = { get: async (_key: string) => () => ({}) };
-    const violations = validateFederationContract(baseContract, container);
+    const violations = await validateFederationContract(baseContract, container);
     expect(violations).toHaveLength(0);
   });
 
-  it('returns a violation when container is null', () => {
-    const violations = validateFederationContract(baseContract, null);
+  it('returns a violation when container is null', async () => {
+    const violations = await validateFederationContract(baseContract, null);
     expect(violations).toHaveLength(1);
     expect(violations[0]?.field).toBe('container');
   });
 
-  it('returns a violation when container is undefined', () => {
-    const violations = validateFederationContract(baseContract, undefined);
+  it('returns a violation when container is undefined', async () => {
+    const violations = await validateFederationContract(baseContract, undefined);
     expect(violations).toHaveLength(1);
     expect(violations[0]?.field).toBe('container');
   });
 
-  it('returns a violation when container.get is not a function', () => {
+  it('returns a violation when container.get is not a function', async () => {
     const badContainer = { get: 'not-a-function' } as unknown as {
       get: (key: string) => Promise<() => unknown>;
     };
-    const violations = validateFederationContract(baseContract, badContainer);
+    const violations = await validateFederationContract(baseContract, badContainer);
     expect(violations.length).toBeGreaterThan(0);
     expect(violations[0]?.field).toBe('container.get');
     expect(violations[0]?.expected).toBe('function');
     expect(violations[0]?.received).toBe('string');
   });
 
-  it('flags expose keys that do not start with "./"', () => {
+  it('flags expose keys that do not start with "./"', async () => {
     const badContract = defineFederationContract({
       name: 'bad',
       exposes: { 'App': null as unknown as object }, // missing "./"
     });
     const container = { get: async (_key: string) => () => ({}) };
-    const violations = validateFederationContract(badContract, container);
+    const violations = await validateFederationContract(badContract, container);
     expect(violations.length).toBeGreaterThan(0);
     expect(violations[0]?.field).toContain('App');
     expect(violations[0]?.expected).toContain('./');
   });
 
-  it('accepts multiple expose keys all starting with "./"', () => {
+  it('accepts multiple expose keys all starting with "./"', async () => {
     const contract = defineFederationContract({
       name: 'ui',
       exposes: {
@@ -114,22 +114,37 @@ describe('validateFederationContract', () => {
       },
     });
     const container = { get: async (_key: string) => () => ({}) };
-    const violations = validateFederationContract(contract, container);
+    const violations = await validateFederationContract(contract, container);
     expect(violations).toHaveLength(0);
   });
 
-  it('returns ContractViolation shape with field, expected, received', () => {
-    const violations = validateFederationContract(baseContract, null);
+  it('returns ContractViolation shape with field, expected, received', async () => {
+    const violations = await validateFederationContract(baseContract, null);
     const v = violations[0];
     expect(v).toHaveProperty('field');
     expect(v).toHaveProperty('expected');
     expect(v).toHaveProperty('received');
   });
 
-  it('returns empty array for contract with no exposes', () => {
+  it('returns empty array for contract with no exposes', async () => {
     const contract = defineFederationContract({ name: 'empty', exposes: {} });
     const container = { get: async (_key: string) => () => ({}) };
-    const violations = validateFederationContract(contract, container);
+    const violations = await validateFederationContract(contract, container);
     expect(violations).toHaveLength(0);
+  });
+
+  it('reports container.get rejection as a violation', async () => {
+    const contract = defineFederationContract({
+      name: 'broken',
+      exposes: { './App': null as unknown as object },
+    });
+    const container = {
+      get: async (_key: string) => {
+        throw new Error('module not found');
+      },
+    };
+    const violations = await validateFederationContract(contract, container);
+    expect(violations.length).toBeGreaterThan(0);
+    expect(violations[0]?.received).toContain('not found');
   });
 });

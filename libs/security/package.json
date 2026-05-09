@@ -1,14 +1,32 @@
 {
   "name": "@mfjs/security",
   "version": "0.1.0",
-  "description": "Security primitives for MFJS: CSP builder, SRI hashes, remote allowlist.",
+  "description": "Security primitives for MFJS: CSP builder, SRI hashes, remote allowlist, HTML/JSON sanitization.",
+  "license": "MIT",
+  "homepage": "https://github.com/anthropics/MFJS#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/MFJS.git",
+    "directory": "libs/security"
+  },
+  "keywords": ["mfjs", "module-federation", "security", "csp", "sri", "allowlist"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "publishConfig": { "access": "public" },
-  "files": ["dist", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./sanitize": { "types": "./dist/sanitize.d.ts", "import": "./dist/sanitize.js" },
+    "./csp": { "types": "./dist/csp.d.ts", "import": "./dist/csp.js" },
+    "./sri": { "types": "./dist/sri.d.ts", "import": "./dist/sri.js" },
+    "./allowlist": { "types": "./dist/allowlist.d.ts", "import": "./dist/allowlist.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },

@@ -1,3 +1,5 @@
+import { escapeHtml } from '@mfjs/security';
+
 export interface PreloadLink {
   href: string;
   as?: 'script' | 'style' | 'font' | 'image' | 'fetch';
@@ -13,11 +15,11 @@ export function buildPreloadTags(links: PreloadLink[]): string {
 
 function linkTag(l: PreloadLink): string {
   const rel = l.rel ?? (l.as === 'script' ? 'modulepreload' : 'preload');
-  const attrs: string[] = [`rel="${rel}"`, `href="${escape(l.href)}"`];
-  if (l.as && rel !== 'modulepreload') attrs.push(`as="${l.as}"`);
-  if (l.crossorigin) attrs.push(`crossorigin="${l.crossorigin}"`);
-  if (l.integrity) attrs.push(`integrity="${escape(l.integrity)}"`);
-  if (l.type) attrs.push(`type="${escape(l.type)}"`);
+  const attrs: string[] = [`rel="${escapeHtml(rel)}"`, `href="${escapeHtml(l.href)}"`];
+  if (l.as && rel !== 'modulepreload') attrs.push(`as="${escapeHtml(l.as)}"`);
+  if (l.crossorigin) attrs.push(`crossorigin="${escapeHtml(l.crossorigin)}"`);
+  if (l.integrity) attrs.push(`integrity="${escapeHtml(l.integrity)}"`);
+  if (l.type) attrs.push(`type="${escapeHtml(l.type)}"`);
   return `<link ${attrs.join(' ')}>`;
 }
 
@@ -30,8 +32,4 @@ export function remoteEntryPreloads(
     crossorigin: 'anonymous',
     ...(r.integrity ? { integrity: r.integrity } : {}),
   }));
-}
-
-function escape(v: string): string {
-  return v.replace(/"/g, '&quot;');
 }

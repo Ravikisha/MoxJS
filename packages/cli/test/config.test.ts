@@ -38,7 +38,7 @@ describe('loadWorkspaceConfig', () => {
     expect(plugins).toEqual([]);
   });
 
-  it('loads mfjs.config.ts when present (best-effort) and merges with JSON', async () => {
+  it('loads mfjs.config.ts when a compiled .js sibling is present, and merges with JSON', async () => {
     const dir = await mkTmpDir('mfjs-config-ts-');
 
     await write(
@@ -50,12 +50,15 @@ describe('loadWorkspaceConfig', () => {
           federation: { shared: ['react'] },
         },
         null,
-        2
-      )
+        2,
+      ),
     );
 
+    // The CLI no longer imports raw .ts; ship a compiled .js sibling. The
+    // marker .ts is kept to verify the loader picks the .js up.
+    await write(path.join(dir, 'mfjs.config.ts'), '// source\n');
     await write(
-      path.join(dir, 'mfjs.config.ts'),
+      path.join(dir, 'mfjs.config.js'),
       [
         "const plugin = { name: 'p1', configResolved: (cfg) => ({ ...cfg, name: 'from-ts' }) };",
         'export default {',
@@ -65,7 +68,7 @@ describe('loadWorkspaceConfig', () => {
         '  plugins: [plugin],',
         '};',
         '',
-      ].join('\n')
+      ].join('\n'),
     );
 
     const { cfg, plugins } = await loadWorkspaceConfig(dir);
@@ -83,16 +86,25 @@ describe('loadWorkspaceConfig', () => {
     expect(plugins.map((p) => p.name)).toEqual(['p1']);
   });
 
-  it('does not throw when mfjs.config.ts fails to import', async () => {
+  it('throws a clear MfjsCliError when mfjs.config.ts has no compiled .js sibling', async () => {
     const dir = await mkTmpDir('mfjs-config-badts-');
 
     await write(
       path.join(dir, 'mfjs.config.ts'),
-      'export default (this is not valid ts);\n'
+      'export default (this is not valid ts);\n',
     );
 
-    const { cfg, plugins } = await loadWorkspaceConfig(dir);
-    expect(cfg).toEqual({});
-    expect(plugins).toEqual([]);
+    await expect(loadWorkspaceConfig(dir)).rejects.toThrow(/CONFIG-002|no compiled mfjs.config.js/);
+  });
+
+  it('loads a compiled mfjs.config.js sibling', async () => {
+    const dir = await mkTmpDir('mfjs-config-jsts-');
+    await write(path.join(dir, 'mfjs.config.ts'), '// source\n');
+    await write(
+      path.join(dir, 'mfjs.config.js'),
+      "export default { name: 'from-js' };\n",
+    );
+    const { cfg } = await loadWorkspaceConfig(dir);
+    expect(cfg.name).toBe('from-js');
   });
 });

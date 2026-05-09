@@ -15,5 +15,13 @@ export function redirect(location: string, status: 301 | 302 | 303 | 307 | 308 =
 }
 
 export function isRedirect(err: unknown): err is SsrRedirect {
-  return err instanceof SsrRedirect || (typeof err === 'object' && err !== null && (err as { name?: string }).name === 'SsrRedirect');
+  if (err instanceof SsrRedirect) return true;
+  // Cross-realm fallback: an error that quacks like a redirect must also carry
+  // a string `location`. Without that, a random `{name:'SsrRedirect'}` could
+  // short-circuit the catch and break headers.
+  if (typeof err === 'object' && err !== null) {
+    const obj = err as { name?: string; location?: unknown; status?: unknown };
+    return obj.name === 'SsrRedirect' && typeof obj.location === 'string';
+  }
+  return false;
 }

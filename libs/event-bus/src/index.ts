@@ -1,128 +1,151 @@
 export type EventMap = Record<string, unknown>;
 
 export type Handler<T> = (payload: T) => void;
-
-/** Returned by `on()` / `once()` — call to remove the subscription. */
+export type WildcardHandler<Events extends EventMap> = <K extends keyof Events>(
+  event: K,
+  payload: Events[K],
+) => void;
+export type ErrorHandler = (err: unknown, event: string) => void;
 export type Unsubscribe = () => void;
 
+interface OnOptions {
+  /** Replay the most recent event of this name to the new subscriber. */
+  replay?: boolean;
+}
+
 /**
- * Lightweight typed publish/subscribe event bus.
- *
- * @example
- * ```ts
- * type AppEvents = { ping: { n: number }; ready: undefined };
- * const bus = new EventBus<AppEvents>();
- *
- * const unsub = bus.on('ping', (p) => console.log(p.n));
- * bus.emit('ping', { n: 42 }); // logs 42
- * unsub();                      // remove subscription
- * ```
- *
- * For Module Federation use, share a **singleton** instance via the MF
- * shared config:
- * ```json
- * { "@mfjs/event-bus": { "singleton": true } }
- * ```
+ * Lightweight typed publish/subscribe event bus with wildcard support, optional
+ * replay-on-subscribe, and a per-bus error handler so a single throwing
+ * listener cannot abort iteration.
  */
 export class EventBus<Events extends EventMap = EventMap> {
   private handlers: { [K in keyof Events]?: Set<Handler<Events[K]>> } = {};
+  private wildcards = new Set<WildcardHandler<Events>>();
+  private last: { [K in keyof Events]?: Events[K] } = {};
+  private errorHandler: ErrorHandler;
 
-  /**
-   * Subscribe to an event. Returns an unsubscribe function.
-   */
-  on<K extends keyof Events>(event: K, handler: Handler<Events[K]>): Unsubscribe {
-    const set = (this.handlers[event] ??= new Set());
-    set.add(handler);
-    return () => set.delete(handler);
+  constructor(opts: { errorHandler?: ErrorHandler } = {}) {
+    this.errorHandler = opts.errorHandler ?? defaultErrorHandler;
   }
 
-  /**
-   * Subscribe to an event exactly once. The handler is automatically removed
-   * after the first invocation.
-   */
+  /** Subscribe to an event. Returns an unsubscribe function. */
+  on<K extends keyof Events>(
+    event: K,
+    handler: Handler<Events[K]>,
+    opts?: OnOptions,
+  ): Unsubscribe {
+    const set = (this.handlers[event] ??= new Set());
+    set.add(handler);
+    if (opts?.replay && event in this.last) {
+      try {
+        handler(this.last[event] as Events[K]);
+      } catch (err) {
+        this.errorHandler(err, String(event));
+      }
+    }
+    return () => {
+      set.delete(handler);
+    };
+  }
+
+  /** Subscribe to ALL events — useful for logging / devtools. */
+  onAny(handler: WildcardHandler<Events>): Unsubscribe {
+    this.wildcards.add(handler);
+    return () => {
+      this.wildcards.delete(handler);
+    };
+  }
+
+  /** Subscribe exactly once. Handler is removed before its first call. */
   once<K extends keyof Events>(event: K, handler: Handler<Events[K]>): Unsubscribe {
     const wrapper: Handler<Events[K]> = (payload) => {
-      unsub();
-      handler(payload);
+      try {
+        handler(payload);
+      } finally {
+        unsub();
+      }
     };
     const unsub = this.on(event, wrapper);
     return unsub;
   }
 
-  /**
-   * Remove a specific handler for an event. No-op if the handler is not registered.
-   */
   off<K extends keyof Events>(event: K, handler: Handler<Events[K]>): void {
     this.handlers[event]?.delete(handler);
   }
 
-  /**
-   * Emit an event, calling all registered handlers synchronously.
-   * No-op (no error) if no handlers are registered.
-   */
   emit<K extends keyof Events>(event: K, payload: Events[K]): void {
+    this.last[event] = payload;
     const set = this.handlers[event];
-    if (!set) return;
-    // Snapshot the set before iterating so that handlers added during emit
-    // are not called in the same cycle, and handlers removed during emit
-    // (e.g. via `once`) do not cause iteration issues.
-    for (const handler of [...set]) handler(payload);
-  }
-
-  /**
-   * Remove all handlers for a specific event, or all handlers for all events
-   * if no event name is provided.
-   */
-  clear<K extends keyof Events>(event?: K): void {
-    if (event !== undefined) {
-      delete this.handlers[event];
-    } else {
-      this.handlers = {};
+    if (set) {
+      for (const handler of [...set]) {
+        try {
+          handler(payload);
+        } catch (err) {
+          this.errorHandler(err, String(event));
+        }
+      }
+    }
+    if (this.wildcards.size) {
+      for (const handler of [...this.wildcards]) {
+        try {
+          handler(event, payload);
+        } catch (err) {
+          this.errorHandler(err, String(event));
+        }
+      }
     }
   }
 
-  /**
-   * Returns the number of handlers currently registered for an event.
-   */
+  /** Replay the most recent emission for `event` to a single handler synchronously. */
+  replay<K extends keyof Events>(event: K, handler: Handler<Events[K]>): boolean {
+    if (!(event in this.last)) return false;
+    try {
+      handler(this.last[event] as Events[K]);
+    } catch (err) {
+      this.errorHandler(err, String(event));
+    }
+    return true;
+  }
+
+  /** Override the error handler for this bus. */
+  onError(handler: ErrorHandler): void {
+    this.errorHandler = handler;
+  }
+
+  clear<K extends keyof Events>(event?: K): void {
+    if (event !== undefined) {
+      delete this.handlers[event];
+      delete this.last[event];
+    } else {
+      this.handlers = {};
+      this.last = {};
+      this.wildcards.clear();
+    }
+  }
+
   listenerCount<K extends keyof Events>(event: K): number {
     return this.handlers[event]?.size ?? 0;
   }
 }
 
-// ── Singleton factory ─────────────────────────────────────────────────────────
-
-let _globalBus: EventBus<EventMap> | undefined;
-
-/**
- * Returns the process-level singleton `EventBus`.
- *
- * In Module Federation, this is shared across the host and all remotes when
- * `@mfjs/event-bus` is listed as a `singleton: true` shared dependency.
- * Both the host and remote will receive the **same** bus instance, enabling
- * cross-MFE communication without any extra wiring.
- *
- * @example
- * ```ts
- * // host
- * import { getEventBus } from '@mfjs/event-bus';
- * getEventBus<AppEvents>().emit('user:login', { userId: '42' });
- *
- * // remote
- * import { getEventBus } from '@mfjs/event-bus';
- * getEventBus<AppEvents>().on('user:login', ({ userId }) => console.log(userId));
- * ```
- */
-export function getEventBus<Events extends EventMap = EventMap>(): EventBus<Events> {
-  if (!_globalBus) {
-    _globalBus = new EventBus<EventMap>();
-  }
-  return _globalBus as EventBus<Events>;
+function defaultErrorHandler(err: unknown, event: string): void {
+  // eslint-disable-next-line no-console
+  console.error(`[mfjs/event-bus] handler for "${event}" threw:`, err);
 }
 
-/**
- * Reset the process-level singleton. For use in tests only.
- * @internal
- */
+// ── globalThis-pinned singleton ────────────────────────────────────────────
+
+const BUS_KEY = '__MFJS_EVENT_BUS_SINGLETON__';
+type GlobalWithBus = typeof globalThis & { [BUS_KEY]?: EventBus<EventMap> };
+
+export function getEventBus<Events extends EventMap = EventMap>(): EventBus<Events> {
+  const g = globalThis as GlobalWithBus;
+  if (!g[BUS_KEY]) g[BUS_KEY] = new EventBus<EventMap>();
+  return g[BUS_KEY] as unknown as EventBus<Events>;
+}
+
+/** @internal */
 export function _resetEventBus(): void {
-  _globalBus = undefined;
+  const g = globalThis as GlobalWithBus;
+  delete g[BUS_KEY];
 }

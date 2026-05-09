@@ -4,19 +4,47 @@ import os from 'node:os';
 import fs from 'fs-extra';
 
 // Mock child_process so we don't actually start dev servers.
+let __nextPid = 1000;
 vi.mock('node:child_process', () => {
   return {
     spawn: vi.fn((..._args: any[]) => {
       return {
         on: vi.fn(),
+        stdout: { on: vi.fn() },
+        stderr: { on: vi.fn() },
         killed: false,
-        kill: vi.fn()
+        exitCode: null,
+        pid: __nextPid++,
+        kill: vi.fn(),
       };
-    })
+    }),
+  };
+});
+
+// tree-kill is invoked by attachGracefulShutdown — expose a mock so tests can
+// assert that all spawned children get torn down.
+vi.mock('tree-kill', () => {
+  return {
+    default: vi.fn((_pid: number, _signal: string, cb?: (err?: Error | null) => void) => {
+      if (cb) cb(null);
+    }),
+  };
+});
+
+// chokidar — we don't exercise the watcher in tests but the import must resolve.
+vi.mock('chokidar', () => {
+  return {
+    default: {
+      watch: vi.fn(() => ({
+        on: vi.fn().mockReturnThis(),
+        close: vi.fn(),
+      })),
+    },
   };
 });
 
 import { spawn } from 'node:child_process';
+import treeKill from 'tree-kill';
 
 import { devCommand } from '../src/commands/dev.js';
 
@@ -95,11 +123,12 @@ describe('mfjs dev', () => {
     const calls = (spawn as unknown as { mock: { calls: any[][] } }).mock.calls;
     const hostSpawnCall = calls.find(
       (c) =>
-        c[0] === 'pnpm' &&
+        (c[0] === 'pnpm' || c[0] === 'pnpm.cmd') &&
         Array.isArray(c[1]) &&
-  (c[1][0] === 'dev' || (c[1][0] === 'run' && c[1][1] === 'dev')) &&
-  String(c[2]?.cwd || '').includes('mfjs-dev-proxy-') &&
-  String(c[2]?.cwd || '').endsWith('/apps/shell')
+        (c[1][0] === 'dev' || (c[1][0] === 'run' && c[1][1] === 'dev')) &&
+        String(c[2]?.cwd || '').includes('mfjs-dev-proxy-') &&
+        // Accept both POSIX and Windows separators.
+        /[\\/]apps[\\/]shell$/.test(String(c[2]?.cwd || '')),
     );
   expect(hostSpawnCall).toBeTruthy();
     expect(hostSpawnCall?.[2]?.env?.MFJS_FEDERATION_FILE).toBe('mfjs.federation.proxy.json');
@@ -137,22 +166,26 @@ describe('mfjs dev', () => {
       port: 3001,
     });
 
-    // Capture the mock spawn calls before running so we can track which processes were created.
     (spawn as unknown as { mock: { calls: any[][] } }).mock.calls.length = 0;
     vi.mocked(spawn as unknown as (...args: any[]) => any).mockClear();
+    vi.mocked(treeKill as unknown as (...args: any[]) => any).mockClear();
 
     await run(['--dir', tmp], tmp);
 
-    // Simulate SIGINT — process.once('SIGINT', ...) registered by attachGracefulShutdown.
+    // Simulate SIGINT — attachGracefulShutdown registered process.once('SIGINT', ...).
     process.emit('SIGINT');
+    // Allow the queued microtasks (Promise.all of killTree calls) to settle.
+    await new Promise((r) => setTimeout(r, 50));
 
-    const calls = (spawn as unknown as { mock: { calls: any[][]; results: any[] } }).mock;
-    // Each spawned mock child should have had .kill() called on it.
-    for (const result of calls.results) {
-      const child = result.value as { kill: ReturnType<typeof vi.fn>; killed: boolean };
-      // kill() should have been invoked (SIGTERM) or child was already marked killed.
-      const killCalled = (child.kill as ReturnType<typeof vi.fn>).mock.calls.length > 0;
-      expect(killCalled || child.killed).toBe(true);
+    const spawned = (spawn as unknown as { mock: { results: any[] } }).mock.results.map(
+      (r) => r.value as { pid: number },
+    );
+    const killedPids = vi
+      .mocked(treeKill as unknown as (...args: any[]) => any)
+      .mock.calls.map((c: unknown[]) => c[0] as number);
+
+    for (const child of spawned) {
+      expect(killedPids).toContain(child.pid);
     }
   });
 });

@@ -17,7 +17,7 @@ type ScaffoldOpts = {
 async function readWorkspaceTailwindDefault(workspaceDir: string): Promise<boolean> {
   try {
     const { cfg } = await loadWorkspaceConfig(workspaceDir);
-    return getTailwindDefault(cfg);
+    return getTailwindDefault(cfg) ?? false;
   } catch {
     return false;
   }

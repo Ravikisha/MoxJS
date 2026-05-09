@@ -18,7 +18,8 @@ export async function registerMfjsServiceWorker(
 ): Promise<ServiceWorkerRegistration | null> {
   if (typeof window === 'undefined') return null;
   if (!('serviceWorker' in navigator)) return null;
-  const enabled = opts.enabled ?? (typeof process !== 'undefined' && process.env?.NODE_ENV === 'production');
+  const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
+  const enabled = opts.enabled ?? (g.process?.env?.['NODE_ENV'] === 'production');
   if (!enabled) return null;
 
   const url = opts.url ?? '/mfjs-sw.js';

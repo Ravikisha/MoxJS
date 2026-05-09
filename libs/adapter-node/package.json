@@ -2,11 +2,24 @@
   "name": "@mfjs/adapter-node",
   "version": "0.1.0",
   "description": "Node.js HTTP server adapter for MFJS SSR.",
+  "license": "MIT",
+  "homepage": "https://github.com/anthropics/MFJS#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/MFJS.git",
+    "directory": "libs/adapter-node"
+  },
+  "keywords": ["mfjs", "node", "http", "ssr", "module-federation"],
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "publishConfig": { "access": "public" },
-  "files": ["dist", "templates", "README.md"],
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "templates", "README.md", "LICENSE"],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json"
   },

@@ -11,7 +11,7 @@ interface ViewTransitionHandle {
   skipTransition: () => void;
 }
 
-interface DocumentWithVT extends Document {
+interface DocumentWithVT {
   startViewTransition?: StartViewTransition;
 }
 

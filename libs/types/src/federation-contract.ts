@@ -148,21 +148,15 @@ export type ContractViolation = {
 };
 
 /**
- * Runtime validation: check that a loaded remote container exposes all keys
- * declared in the contract. Returns an array of violations (empty = valid).
+ * Structural-only validation. Checks the contract object itself: keys must
+ * start with `./`, the container must look like a real MF container.
  *
- * @example
- * ```ts
- * const violations = validateFederationContract(dashboardContract, remoteContainer);
- * if (violations.length > 0) {
- *   console.error('Contract violated:', violations);
- * }
- * ```
+ * Use this in tests or build-time consistency checks where the remote
+ * container is not actually loaded.
  */
-export function validateFederationContract(
+export function validateFederationContractKeys(
   contract: FederationContract,
-  // The remote container object as returned by Webpack/Rspack MF
-  container: { get: (key: string) => Promise<() => unknown> } | undefined | null
+  container: { get: (key: string) => Promise<() => unknown> } | undefined | null,
 ): ContractViolation[] {
   const violations: ContractViolation[] = [];
 
@@ -184,13 +178,64 @@ export function validateFederationContract(
     return violations;
   }
 
-  // Verify all declared exposed keys start with "./"
   for (const key of Object.keys(contract.exposes)) {
     if (!key.startsWith('./')) {
       violations.push({
         field: `exposes["${key}"]`,
         expected: 'key starting with "./"',
         received: key,
+      });
+    }
+  }
+
+  return violations;
+}
+
+/**
+ * Runtime validation: actually call `container.get(key)` for each declared
+ * exposed module to verify the remote really exposes them. Returns an array
+ * of violations (empty = valid).
+ *
+ * @example
+ * ```ts
+ * const violations = await validateFederationContract(dashboardContract, remoteContainer);
+ * if (violations.length > 0) {
+ *   console.error('Contract violated:', violations);
+ * }
+ * ```
+ */
+export async function validateFederationContract(
+  contract: FederationContract,
+  container: { get: (key: string) => Promise<() => unknown> } | undefined | null,
+): Promise<ContractViolation[]> {
+  const violations = validateFederationContractKeys(contract, container);
+  if (violations.length > 0 || !container) return violations;
+
+  for (const key of Object.keys(contract.exposes)) {
+    if (!key.startsWith('./')) continue;
+    try {
+      const factory = await container.get(key);
+      if (typeof factory !== 'function') {
+        violations.push({
+          field: `exposes["${key}"]`,
+          expected: 'container.get returns a factory function',
+          received: typeof factory,
+        });
+        continue;
+      }
+      const mod = factory();
+      if (mod === undefined || mod === null) {
+        violations.push({
+          field: `exposes["${key}"]`,
+          expected: 'factory() returns a module',
+          received: String(mod),
+        });
+      }
+    } catch (err) {
+      violations.push({
+        field: `exposes["${key}"]`,
+        expected: 'container.get(key) resolves',
+        received: err instanceof Error ? err.message : String(err),
       });
     }
   }

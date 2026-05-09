@@ -1,10 +1,9 @@
 /**
  * Shared route-matching utilities for SSR route tables.
  *
- * The SSR route table is simpler than the runtime route table: it is a flat
- * list of `SsrRoute` objects, each with a pre-known path and optional params.
- * For static export we match exact paths; for the edge adapter we match
- * route patterns (`:param` and `*` splat) the same way `matchPath` does in
+ * The SSR route table is a flat list of `SsrRoute` objects, each with a
+ * pre-known path and optional params. For static export we match exact paths;
+ * for the edge adapter we match patterns the same way `matchPath` does in
  * `@mfjs/runtime`.
  */
 
@@ -15,13 +14,21 @@ export type SsrRouteMatch = {
   params: Record<string, string>;
 };
 
+function safeDecode(s: string): string | null {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Find the first route whose path pattern matches `pathname`.
  *
  * Supports:
  * - Exact paths   (`/dashboard/settings`)
  * - Param segments (`/users/:id`)
- * - Splat (`/blog/*`)
+ * - Splat (`/blog/*`) — must be terminal
  */
 export function matchRoutePath(routes: SsrRoute[], pathname: string): SsrRouteMatch | null {
   const norm = normalizePath(pathname);
@@ -34,8 +41,6 @@ export function matchRoutePath(routes: SsrRoute[], pathname: string): SsrRouteMa
   }
   return null;
 }
-
-// ── Pattern matcher ───────────────────────────────────────────────────────────
 
 function matchPattern(pattern: string, pathname: string): Record<string, string> | null {
   const p = normalizePath(pattern);
@@ -56,14 +61,24 @@ function matchPattern(pattern: string, pathname: string): Record<string, string>
     if (ps === undefined) return null;
 
     if (ps === '*') {
-      params['*'] = uSegs.slice(j).join('/');
+      if (i !== pSegs.length - 1) {
+        // Non-terminal splat is a configuration error; refuse to match silently.
+        return null;
+      }
+      const decoded = uSegs
+        .slice(j)
+        .map((s) => safeDecode(s) ?? s)
+        .join('/');
+      params['*'] = decoded;
       return params;
     }
 
     if (!us) return null;
 
     if (ps.startsWith(':')) {
-      params[ps.slice(1)] = decodeURIComponent(us);
+      const decoded = safeDecode(us);
+      if (decoded === null) return null;
+      params[ps.slice(1)] = decoded;
       continue;
     }
 

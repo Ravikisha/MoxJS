@@ -80,13 +80,24 @@ export type EdgeRequest = {
   /** Absolute URL string, e.g. "https://example.com/dashboard/settings". */
   url: string;
   method: string;
+  /** Header keys must be lower-cased by the adapter. */
   headers: Record<string, string>;
+  /**
+   * Request body. May be a string for already-decoded text bodies, a Uint8Array
+   * for binary, or a ReadableStream for streamed forwarding. Adapters should
+   * NOT attempt to read the stream more than once.
+   */
+  body?: string | Uint8Array | ReadableStream<Uint8Array>;
+  /** Optional cancellation signal for cooperative request abort. */
+  signal?: AbortSignal;
 };
 
 export type EdgeResponse = {
   status: number;
+  /** Header keys are lower-cased; adapters MUST NOT mix casing. */
   headers: Record<string, string>;
-  body: string;
+  /** Response body. ReadableStream is preferred for large/streamed responses. */
+  body: string | Uint8Array | ReadableStream<Uint8Array>;
 };
 
 /**

@@ -43,6 +43,11 @@ export type MfjsRoutingCompiler = {
 
 export const defaultRoutingCompiler: MfjsRoutingCompiler = {
   routeFromPageFile(relFromPages: string) {
+    if (!relFromPages) {
+      throw new Error(
+        '[mfjs/types] routeFromPageFile: empty input. Pass a path relative to src/pages/.',
+      );
+    }
     let withoutExt = relFromPages.replace(/\.(tsx|ts|jsx|js)$/, '');
     withoutExt = withoutExt.replace(/\\/g, '/');
 
@@ -52,6 +57,9 @@ export const defaultRoutingCompiler: MfjsRoutingCompiler = {
     for (let i = 0; i < segs.length; i++) {
       const s = segs[i];
       if (!s) continue;
+      // Drop "(group)" folders like Next.js — they affect filesystem layout
+      // but not the route path.
+      if (s.startsWith('(') && s.endsWith(')')) continue;
       if (s === 'index' && i === segs.length - 1) continue;
 
       const mCatchAll = s.match(/^\[\.\.\.(.+)\]$/);
@@ -84,6 +92,18 @@ export const defaultRoutingCompiler: MfjsRoutingCompiler = {
       return s * 100 + segs.length;
     };
 
-    return [...routes].sort((a, b) => score(b.path) - score(a.path));
+    const sorted = [...routes].sort((a, b) => score(b.path) - score(a.path));
+    const g = globalThis as { process?: { env?: Record<string, string | undefined> } };
+    if (g.process?.env?.['NODE_ENV'] !== 'production') {
+      const seen = new Set<string>();
+      for (const r of sorted) {
+        if (seen.has(r.path)) {
+          // eslint-disable-next-line no-console
+          console.warn(`[mfjs/types] sortRoutesForMatching: duplicate route path "${r.path}" — first match wins.`);
+        }
+        seen.add(r.path);
+      }
+    }
+    return sorted;
   },
 };

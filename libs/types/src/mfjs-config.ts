@@ -57,5 +57,5 @@ export type MfjsWorkspaceConfig = {
   features?: MfjsFeaturesConfig;
 
   /** Plugins (either inline or imported). */
-  plugins?: unknown[];
+  plugins?: import('./plugins.js').MfjsPlugin[];
 };

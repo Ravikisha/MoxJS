@@ -142,20 +142,27 @@ const exportCommand = new Command('export')
     const isStringApp = typeof App === 'function' && typeof App({ path: '/', params: {} }) === 'string';
 
     const pages = isStringApp
-      ? await Promise.all(
-          config.routes.map(async (route) => {
-            const html = await Promise.resolve(App({ path: route.path, params: route.params ?? {} }));
-            const content = (injectIntoTemplate ?? ((t: string, h: string) => t.replace('<!--ssr-outlet-->', h)))(
-              template,
-              html
-            );
-            const file = route.path === '/' ? 'index.html' : `${route.path.replace(/^\//, '').replace(/\/$/, '')}/index.html`;
-            const outPath = path.join(outDir, file);
-            await fs.ensureDir(path.dirname(outPath));
-            await fs.writeFile(outPath, content, 'utf8');
-            return { file, content };
-          })
-        )
+      ? (
+          await Promise.all(
+            config.routes.map(async (route: { path: string; params?: Record<string, string> }) => {
+              // Pattern routes (`:id`, `*`) cannot become static files —
+              // skip silently, keeping behavior consistent with @mfjs/ssr.
+              if (/[:*]/.test(route.path)) return null;
+              const html = await Promise.resolve(App({ path: route.path, params: route.params ?? {} }));
+              const content = (injectIntoTemplate ?? ((t: string, h: string) => t.replace('<!--ssr-outlet-->', h)))(
+                template,
+                html,
+              );
+              const file = route.path === '/'
+                ? 'index.html'
+                : `${route.path.replace(/^\//, '').replace(/\/$/, '')}/index.html`;
+              const outPath = path.join(outDir, file);
+              await fs.ensureDir(path.dirname(outPath));
+              await fs.writeFile(outPath, content, 'utf8');
+              return { file, content };
+            }),
+          )
+        ).filter((p): p is { file: string; content: string } => p !== null)
       : await staticExport({ routes: config.routes, App, template, outDir });
 
     for (const page of pages) {

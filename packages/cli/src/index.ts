@@ -1,9 +1,8 @@
 #!/usr/bin/env node
 import { Command } from 'commander';
-import kleur from 'kleur';
 import path from 'node:path';
+import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createRequire } from 'node:module';
 import { initCommand } from './commands/init.js';
 import { generateCommand } from './commands/generate.js';
 import { devCommand } from './commands/dev.js';
@@ -29,20 +28,34 @@ export const program = new Command();
 
 function getCliVersion(): string {
   try {
-    const req = createRequire(import.meta.url);
-    // package.json sits one level up from src/
-    const pkg = req('../package.json') as { version?: string };
+    const pkgPath = fileURLToPath(new URL('../package.json', import.meta.url));
+    const raw = fs.readFileSync(pkgPath, 'utf8');
+    const pkg = JSON.parse(raw) as { version?: string };
     return pkg.version ?? '0.0.0';
-  } catch {
+  } catch (err) {
+    if (process.env['MFJS_DEBUG'] === '1') {
+      // eslint-disable-next-line no-console
+      console.error('[mfjs] could not read own package.json:', (err as Error).message);
+    }
     return '0.0.0';
   }
 }
 
-
 program
   .name('mfjs')
   .description('MFJS CLI (micro-frontend framework)')
-  .version(getCliVersion());
+  .version(getCliVersion())
+  .option('--cwd <path>', 'Workspace root directory (overrides --dir on subcommands)')
+  .option('-v, --verbose', 'Verbose logging (sets MFJS_DEBUG=1)', false)
+  .option('--dry-run', 'Print what would be done without making changes (where supported)', false)
+  .hook('preAction', (cmd) => {
+    const opts = cmd.opts() as { verbose?: boolean; cwd?: string };
+    if (opts.verbose) process.env['MFJS_DEBUG'] = '1';
+    if (opts.cwd) {
+      // Don't chdir — surface the value through env so subcommands can opt in.
+      process.env['MFJS_CWD'] = path.resolve(opts.cwd);
+    }
+  });
 
 program.addCommand(initCommand);
 program.addCommand(generateCommand);
@@ -64,25 +77,40 @@ program.addCommand(testCommand);
 program.addCommand(envCommand);
 program.addCommand(swCommand);
 
-program.showHelpAfterError();
+program.showHelpAfterError('(use --help)');
+program.showSuggestionAfterError(true);
 
-// Only parse argv when invoked via the CLI bin. When imported (tests, other
-// programmatic use), consumers should call program.parse/parseAsync themselves.
-//
-// Heuristic: when Node executes this file as the entrypoint, `process.argv[1]`
-// points at this file. When it's imported, argv[1] points elsewhere.
 const isDirectInvocation = (() => {
   try {
-    return path.resolve(process.argv[1] ?? '') === path.resolve(fileURLToPath(import.meta.url));
+    const argv1 = process.argv[1] ?? '';
+    if (!argv1) return false;
+    const a = fs.realpathSync(argv1);
+    const b = fs.realpathSync(fileURLToPath(import.meta.url));
+    return path.resolve(a) === path.resolve(b);
   } catch {
-    return false;
+    // Symlink / shim cases (npm-link, pnpm.cmd, tsx) — fall back to a looser
+    // check that simply looks for our bin name in argv[1].
+    try {
+      return /[\\/]mfjs(\.[cm]?js)?$/.test(process.argv[1] ?? '');
+    } catch {
+      return false;
+    }
   }
 })();
 
 if (isDirectInvocation) {
-  try {
-    program.parse(process.argv);
-  } catch (err) {
-  printCliError(err);
-  }
+  process.on('unhandledRejection', (reason) => {
+    printCliError(reason);
+  });
+  process.on('uncaughtException', (err) => {
+    printCliError(err);
+    process.exit(1);
+  });
+  void (async () => {
+    try {
+      await program.parseAsync(process.argv);
+    } catch (err) {
+      printCliError(err);
+    }
+  })();
 }

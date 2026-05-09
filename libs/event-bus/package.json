@@ -1,14 +1,29 @@
 {
   "name": "@mfjs/event-bus",
   "version": "0.1.0",
+  "description": "Typed pub/sub event bus for MFJS micro-frontends with wildcard, replay, and cross-tab support.",
+  "license": "MIT",
+  "homepage": "https://github.com/anthropics/MFJS#readme",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anthropics/MFJS.git",
+    "directory": "libs/event-bus"
+  },
+  "keywords": ["mfjs", "module-federation", "event-bus", "pubsub", "micro-frontend"],
   "private": false,
   "publishConfig": { "access": "public" },
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" },
+    "./package.json": "./package.json"
+  },
+  "files": ["dist", "README.md", "LICENSE"],
+  "sideEffects": false,
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.test.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json --noEmit",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage"
   },

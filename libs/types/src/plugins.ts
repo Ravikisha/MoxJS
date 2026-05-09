@@ -46,17 +46,43 @@ export type MfjsPlugin = {
   devPlan?: (plan: MfjsDevPlan) => MfjsDevPlan | void | Promise<MfjsDevPlan | void>;
 };
 
-export async function applyPlugins<T>(
-  value: T,
+type PluginHookValue = {
+  configResolved: MfjsWorkspaceConfig;
+  devPlan: MfjsDevPlan;
+};
+
+/**
+ * Apply a single plugin hook across the plugin chain. Each plugin receives the
+ * latest accumulated value; returning `undefined` means "no change", anything
+ * else replaces the value. `null` is reserved for future "drop" semantics.
+ */
+export async function applyPlugins<H extends 'configResolved' | 'devPlan'>(
+  value: PluginHookValue[H],
   plugins: MfjsPlugin[],
-  hook: keyof Pick<MfjsPlugin, 'configResolved' | 'devPlan'>,
-): Promise<T> {
+  hook: H,
+): Promise<PluginHookValue[H]> {
   let out = value;
   for (const p of plugins) {
-    const fn = p[hook] as any;
+    const fn = p[hook];
     if (!fn) continue;
-    const next = await fn(out);
+    const next = await (fn as (v: PluginHookValue[H]) => PluginHookValue[H] | void | Promise<PluginHookValue[H] | void>)(out);
     if (next !== undefined) out = next;
   }
   return out;
+}
+
+/**
+ * Apply the federation hook for a specific app.
+ */
+export async function applyFederationConfigPlugins(
+  args: { workspaceDir: string; app: MfjsAppMeta; config: FederationConfig },
+  plugins: MfjsPlugin[],
+): Promise<FederationConfig> {
+  let cfg = args.config;
+  for (const p of plugins) {
+    if (!p.federationConfig) continue;
+    const next = await p.federationConfig({ ...args, config: cfg });
+    if (next !== undefined) cfg = next;
+  }
+  return cfg;
 }
