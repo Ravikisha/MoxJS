@@ -14,17 +14,17 @@ export default function Islands() {
       <p>
         Ship static HTML, hydrate only interactive regions. The <code>Island</code> wrapper delays
         hydration until a strategy fires — <code>load</code>, <code>idle</code>,{' '}
-        <code>visible</code>, <code>media</code>, or <code>interaction</code>. Below the
-        triggering point the island is just markup; the JS chunk is not even fetched.
+        <code>visible</code>, <code>media</code>, or <code>interaction</code>. Below the triggering
+        point the island is just markup; the JS chunk is not even fetched.
       </p>
       <Callout variant="info" title="Why islands instead of SSR?">
         Streaming SSR hydrates the entire tree once it lands. Islands shift cost: zero JS by
         default, and only the components a user actually reaches pay the hydration tax. Use
-        islands for &quot;mostly-static, locally-interactive&quot; pages (marketing, docs,
-        product pages). Use streaming SSR for &quot;mostly-dynamic&quot; pages (dashboards).
+        islands for &quot;mostly-static, locally-interactive&quot; pages (marketing, docs, product
+        pages). Use streaming SSR for &quot;mostly-dynamic&quot; pages (dashboards).
       </Callout>
 
-      <h2>Use</h2>
+      <h2 id="use">Basic use</h2>
       <CodeBlock
         language="tsx"
         code={`import { Island } from '@moxjs/runtime';
@@ -36,19 +36,62 @@ export default function Islands() {
 />`}
       />
 
-      <h2>Strategies</h2>
+      <h2 id="strategies">Strategies</h2>
       <table>
-        <thead><tr><th>Strategy</th><th>Fires when</th></tr></thead>
+        <thead><tr><th>Strategy</th><th>Fires when</th><th>Notes</th></tr></thead>
         <tbody>
-          <tr><td><code>load</code></td><td>As soon as the client mounts</td></tr>
-          <tr><td><code>idle</code></td><td>Next <code>requestIdleCallback</code></td></tr>
-          <tr><td><code>visible</code></td><td>Enters the viewport (IntersectionObserver)</td></tr>
-          <tr><td><code>media</code></td><td>Media query matches (e.g. <code>(min-width: 768px)</code>)</td></tr>
-          <tr><td><code>interaction</code></td><td>User hovers, focuses, clicks, or touches</td></tr>
+          <tr>
+            <td><code>load</code></td>
+            <td>As soon as the client mounts</td>
+            <td>Hydrates synchronously after initial paint</td>
+          </tr>
+          <tr>
+            <td><code>idle</code></td>
+            <td>Next <code>requestIdleCallback</code></td>
+            <td>Falls back to <code>setTimeout(0)</code> on Safari &lt; 17</td>
+          </tr>
+          <tr>
+            <td><code>visible</code></td>
+            <td>Enters the viewport (IntersectionObserver)</td>
+            <td>Configurable <code>rootMargin</code> via <code>strategyOptions</code></td>
+          </tr>
+          <tr>
+            <td><code>media</code></td>
+            <td>Media query matches (e.g. <code>(min-width: 768px)</code>)</td>
+            <td>Re-evaluated on viewport resize</td>
+          </tr>
+          <tr>
+            <td><code>interaction</code></td>
+            <td>User hovers, focuses, clicks, or touches</td>
+            <td>Click is special-cased: the original click is re-dispatched after hydration</td>
+          </tr>
         </tbody>
       </table>
 
-      <h2>Mark client boundaries</h2>
+      <h2 id="props">Props</h2>
+      <CodeBlock
+        language="ts"
+        code={`interface IslandProps {
+  strategy: 'load' | 'idle' | 'visible' | 'media' | 'interaction';
+  load: () => Promise<{ default: ComponentType<any> }>;
+  props?: Record<string, unknown>;            // forwarded to the hydrated component
+  fallback?: ReactNode;                        // rendered server-side + before hydration
+  strategyOptions?: {
+    rootMargin?: string;                       // 'visible'
+    threshold?: number;                        // 'visible'
+    query?: string;                            // 'media' (overrides default)
+    events?: ('mouseenter'|'focus'|'click'|'touchstart')[];  // 'interaction'
+  };
+  onHydrate?: () => void;                      // observability hook
+}`}
+      />
+
+      <h2 id="boundary">Mark client boundaries</h2>
+      <p>
+        <code>clientBoundary()</code> tags a component as interactive. The marker is consumed by
+        future build tooling that will auto-wrap flagged components in an <code>Island</code>; for
+        now it&apos;s informational and useful as a code-review signal.
+      </p>
       <CodeBlock
         language="tsx"
         code={`import { clientBoundary } from '@moxjs/runtime';
@@ -59,16 +102,11 @@ const Counter = clientBoundary(function Counter() {
 });`}
       />
 
-      <p>
-        The marker is a hook for future build tooling that will auto-wrap flagged components in an{' '}
-        <code>Island</code>. For now the marker is informational.
-      </p>
-
-      <h2>SSR fallback</h2>
+      <h2 id="ssr">SSR fallback</h2>
       <p>
         The <code>fallback</code> prop is rendered on the server and before hydration. Pass the
         same HTML the component produces, or a skeleton. After the strategy fires the real
-        component replaces it.
+        component replaces it — React reconciles, so a matching skeleton means a zero-flash swap.
       </p>
 
       <h2 id="picking-strategy">Picking a strategy</h2>
@@ -121,6 +159,51 @@ const Counter = clientBoundary(function Counter() {
   strategy="visible"
   load={() => import('dashboard/UsageChart')}
   fallback={<div className="chart-skeleton" aria-busy />}
+/>`}
+      />
+
+      <h2 id="interaction-replay">Interaction strategy: event replay</h2>
+      <p>
+        Under <code>strategy=&quot;interaction&quot;</code>, the click that triggers hydration is
+        captured and replayed after the component mounts. The end user perceives a normal click —
+        no double-tap, no skipped action. This works for <code>click</code>; other events
+        (<code>focus</code>, <code>mouseenter</code>) are intent signals only and don&apos;t
+        replay.
+      </p>
+
+      <h2 id="custom-trigger">Custom hydration trigger</h2>
+      <p>
+        Pair the <code>load</code> prop with an external signal (e.g. a feature flag, an event bus
+        message) by wrapping <code>Island</code> in a conditional render. The hydration trigger
+        becomes whatever event flips the surrounding state.
+      </p>
+      <CodeBlock
+        language="tsx"
+        code={`function MaybeChart() {
+  const flagOn = useFeatureFlag('charts');
+  if (!flagOn) return null;
+  return (
+    <Island
+      strategy="visible"
+      load={() => import('./Chart.js')}
+      fallback={<ChartSkeleton />}
+    />
+  );
+}`}
+      />
+
+      <h2 id="metrics">Measuring hydration cost</h2>
+      <p>
+        Pass <code>onHydrate</code> to forward each island&apos;s hydration to your observability
+        adapter. Aggregate per island name and you have a budget you can hold the line on.
+      </p>
+      <CodeBlock
+        language="tsx"
+        code={`<Island
+  strategy="visible"
+  load={() => import('./Carousel.js')}
+  fallback={<CarouselSkeleton />}
+  onHydrate={() => reportMetric({ name: 'moxjs.island.hydrate', tags: { name: 'carousel' } })}
 />`}
       />
 

@@ -12,8 +12,8 @@ export default function ServiceWorker() {
     <>
       <h1>Service Worker</h1>
       <p>
-        MOXJS ships a Service Worker that caches the app shell + every{' '}
-        <code>remoteEntry.js</code> + federation chunks. Second visits (or flaky networks) load
+        MOXJS ships a Service Worker that caches the app shell, every{' '}
+        <code>remoteEntry.js</code>, and federation chunks. Second visits (or flaky networks) load
         instantly from cache. The SW is opt-in — generate it once, register it from your shell
         bootstrap, and the runtime handles updates.
       </p>
@@ -23,54 +23,100 @@ export default function ServiceWorker() {
         <code>process.env.NODE_ENV === &apos;production&apos;</code>.
       </Callout>
 
-      <h2>Generate</h2>
+      <h2 id="generate">Generate</h2>
       <CodeBlock
         language="bash"
         code={`moxjs sw generate --app shell
 # writes apps/shell/public/moxjs-sw.js`}
       />
 
-      <h2>Register</h2>
+      <p>The generated SW reads the build manifest at install time and pre-caches the shell. Re-run the command on every build, or wire it into the <code>build</code> hook of your <code>moxjs.config.ts</code>.</p>
+
+      <h2 id="register">Register</h2>
       <CodeBlock
         language="tsx"
         filename="apps/shell/src/bootstrap.tsx"
         code={`import { registerMoxjsServiceWorker } from '@moxjs/runtime';
 
-registerMoxjsServiceWorker({
-  url: '/moxjs-sw.js',
-  autoActivate: true,
-  onUpdateReady: () => showUpdateBanner(),
-});`}
+if (process.env.NODE_ENV === 'production' && 'serviceWorker' in navigator) {
+  registerMoxjsServiceWorker({
+    url: '/moxjs-sw.js',
+    autoActivate: true,
+    onUpdateReady: () => showUpdateBanner(),
+    onError: (err) => observability.reportError(err),
+  });
+}`}
       />
 
-      <h2>Cache strategy</h2>
+      <h2 id="strategy">Cache strategy</h2>
       <table>
-        <thead><tr><th>Asset class</th><th>Strategy</th></tr></thead>
+        <thead><tr><th>Asset class</th><th>Strategy</th><th>Rationale</th></tr></thead>
         <tbody>
-          <tr><td><code>remoteEntry.js</code> + <code>/moxjs/remotes/**</code></td><td>stale-while-revalidate</td></tr>
-          <tr><td>Fingerprinted chunks <code>*.[hash].js</code></td><td>cache-first</td></tr>
-          <tr><td>HTML documents</td><td>network-first with offline fallback</td></tr>
+          <tr>
+            <td><code>remoteEntry.js</code> + <code>/moxjs/remotes/**</code></td>
+            <td>stale-while-revalidate</td>
+            <td>Cache-first for instant load; revalidate in background so the next visit gets new code</td>
+          </tr>
+          <tr>
+            <td>Fingerprinted chunks <code>*.[hash].js</code></td>
+            <td>cache-first</td>
+            <td>Content-addressable — never changes for a given URL</td>
+          </tr>
+          <tr>
+            <td>HTML documents</td>
+            <td>network-first with offline fallback</td>
+            <td>Always try fresh; serve cached <code>/offline.html</code> if offline</td>
+          </tr>
+          <tr>
+            <td>API requests (<code>/api/**</code>)</td>
+            <td>not cached</td>
+            <td>The SW gets out of the way for dynamic data</td>
+          </tr>
         </tbody>
       </table>
 
-      <h2>Update flow</h2>
-      <p>
-        When a new SW installs, the runtime calls <code>onUpdateReady</code> so you can show a banner. With{' '}
-        <code>autoActivate: true</code> the CLI sends the <code>SKIP_WAITING</code> message automatically.
-      </p>
+      <h2 id="update-flow">Update flow</h2>
+      <ol>
+        <li>User visits — the browser fetches <code>/moxjs-sw.js</code> in the background.</li>
+        <li>If the bytes changed, the new SW installs in parallel and waits in <code>installed</code> state.</li>
+        <li>The runtime fires <code>onUpdateReady</code>. Show a banner: <em>&quot;A new version is available. Reload?&quot;</em></li>
+        <li>
+          User clicks reload → runtime sends <code>SKIP_WAITING</code>; new SW activates and takes
+          control of all open clients. <code>autoActivate: true</code> skips the user prompt and
+          activates immediately — fine for apps where users don&apos;t have unsaved state, risky
+          otherwise.
+        </li>
+      </ol>
 
-      <h2>Unregister</h2>
+      <h2 id="options">Register options</h2>
+      <table>
+        <thead><tr><th>Option</th><th>Default</th><th>Purpose</th></tr></thead>
+        <tbody>
+          <tr><td><code>url</code></td><td>—</td><td>Required. Path to the SW file.</td></tr>
+          <tr><td><code>scope</code></td><td>same as <code>url</code> directory</td><td>Restricts which URLs the SW controls.</td></tr>
+          <tr><td><code>autoActivate</code></td><td><code>false</code></td><td>Skip the waiting state; new SW activates immediately.</td></tr>
+          <tr><td><code>onUpdateReady</code></td><td>—</td><td>Called when a new SW is installed and waiting.</td></tr>
+          <tr><td><code>onActivated</code></td><td>—</td><td>Called when the new SW takes control.</td></tr>
+          <tr><td><code>onError</code></td><td>—</td><td>Registration / install errors.</td></tr>
+        </tbody>
+      </table>
+
+      <h2 id="unregister">Unregister</h2>
       <CodeBlock
         language="ts"
         code={`import { unregisterMoxjsServiceWorker } from '@moxjs/runtime';
 await unregisterMoxjsServiceWorker();`}
       />
 
-      <div className="callout callout-warn">
-        <strong>Scope note:</strong> Service Workers are restricted to the origin root by default. When
-        serving remotes on a CDN subdomain, register a separate SW per origin or proxy remotes under the
-        host origin via <code>moxjs dev --proxy-remotes</code> / a production reverse proxy.
-      </div>
+      <p>Use this from a console command for stuck users, or as a kill-switch wired to a feature flag.</p>
+
+      <Callout variant="warn" title="Scope note">
+        Service Workers are restricted to the origin root by default. When serving remotes on a CDN
+        subdomain, register a separate SW per origin or proxy remotes under the host origin via{' '}
+        <code>moxjs dev --proxy-remotes</code> / a production reverse proxy. The{' '}
+        <code>Service-Worker-Allowed</code> response header is the only way to widen scope beyond
+        the SW file&apos;s directory.
+      </Callout>
 
       <h2 id="debugging">Debugging</h2>
       <ul>
@@ -86,6 +132,14 @@ await unregisterMoxjsServiceWorker();`}
           Caches show up under Application → Cache Storage. Names start with{' '}
           <code>moxjs:</code>; entries include the URL and expiry timestamp.
         </li>
+        <li>
+          To simulate offline, DevTools → Network → throttle dropdown → &quot;Offline&quot;. The SW
+          should serve the cached shell + offline fallback.
+        </li>
+        <li>
+          Console messages from the SW go to a different log surface — open the SW source from the
+          Application panel and click &quot;inspect&quot; to attach a console.
+        </li>
       </ul>
 
       <h2 id="csp">CSP impact</h2>
@@ -95,6 +149,31 @@ await unregisterMoxjsServiceWorker();`}
         directory. They also need <code>script-src 'self'</code> at minimum — strict-dynamic
         nonces do <em>not</em> apply to top-level script registration; only to inline scripts.
       </p>
+
+      <h2 id="cdn-remotes">Caching CDN-hosted remotes</h2>
+      <p>
+        If your remotes live on <code>cdn.acme.com</code>, the same-origin SW cannot cache them
+        directly. Two options:
+      </p>
+      <ol>
+        <li>
+          <strong>Proxy remotes under the host origin.</strong> The Rspack dev-server already does
+          this via <code>--proxy-remotes</code>; in production, a CDN edge function or reverse
+          proxy can replicate the pattern.
+        </li>
+        <li>
+          <strong>Per-origin SW.</strong> Ship a second SW under the CDN origin if it&apos;s yours
+          to control. Coordinate cache version names so a deploy invalidates both.
+        </li>
+      </ol>
+
+      <h2 id="caveats">Caveats</h2>
+      <ul>
+        <li>SW updates are async — there&apos;s always a one-visit lag before users see new bytes.</li>
+        <li>iOS Safari aggressively kills idle SWs; expect occasional cold starts.</li>
+        <li>Setting <code>autoActivate: true</code> while users have unsaved form data is a footgun.</li>
+        <li>The SW must be served with <code>Content-Type: text/javascript</code>; some static hosts default to <code>application/javascript</code> which works but throws on older browsers.</li>
+      </ul>
     </>
   );
 }

@@ -259,6 +259,162 @@ fetchHealth(url: string, opts?: { timeoutMs?: number }): Promise<HealthBody>;`}
       <ul>
         <li><code>connectMoxjsDevReload(url?: string): () =&gt; void</code> — opens a WS to the host&apos;s reload server; auto-injected when <code>MOXJS_DEV_RELOAD_URL</code> is set</li>
       </ul>
+
+      <h2 id="use-remote-data">useRemoteData</h2>
+      <p>
+        Small fetch + cache hook. Dedupes concurrent requests for the same key, TTLs the result,
+        exposes <code>refresh</code> for forced revalidation. Pair with <code>defineLoader</code>{' '}
+        on the server for end-to-end hydration.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`useRemoteData<T>(opts: {
+  key: string | unknown[];
+  fetcher: (signal: AbortSignal) => Promise<T>;
+  ttl?: number;                       // ms, default 0 (no cache)
+  initialData?: T;                    // from hydration
+}): {
+  data: T | undefined;
+  error: unknown | undefined;
+  loading: boolean;
+  refresh(): Promise<void>;
+};`}
+      />
+
+      <h2 id="weighted">Weighted remotes</h2>
+      <p>
+        Pick among multiple URLs for the same remote, weighted by health and rollout percentage.
+        Useful for canary deploys and CDN failover.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`createWeightedRemote(opts: {
+  candidates: Array<{ entryUrl: string; weight: number; healthUrl?: string }>;
+  probeIntervalMs?: number;       // default 30_000
+  failoverOnError?: boolean;      // default true
+}): { resolve(): Promise<string>; dispose(): void };`}
+      />
+
+      <h2 id="blue-green">Blue/green</h2>
+      <p>
+        Two-environment cutover with explicit <code>swap()</code>. Use when canary metrics are
+        green and you want a deterministic flip.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`createBlueGreen(opts: {
+  blue:  { entryUrl: string; version: string };
+  green: { entryUrl: string; version: string };
+  active?: 'blue' | 'green';
+}): BlueGreenController;
+
+interface BlueGreenController {
+  active: 'blue' | 'green';
+  swap(): void;
+  resolve(): { entryUrl: string; version: string };
+  subscribe(listener: (which: 'blue' | 'green') => void): () => void;
+}`}
+      />
+
+      <h2 id="flags">Feature flags</h2>
+      <p>
+        Pluggable provider interface. Bring LaunchDarkly / Statsig / your-own and the runtime
+        exposes a singleton with <code>useFeatureFlag</code> + <code>useFeatureFlags</code> hooks.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`interface FeatureFlagProvider {
+  getBool(key: string, fallback?: boolean): boolean;
+  getString(key: string, fallback?: string): string;
+  getNumber(key: string, fallback?: number): number;
+  subscribe(listener: () => void): () => void;
+}
+
+setFeatureFlagProvider(provider: FeatureFlagProvider): void;
+useFeatureFlag(key: string, fallback?: boolean): boolean;
+useFeatureFlags<T extends Record<string, boolean>>(keys: T): T;`}
+      />
+
+      <h2 id="resilience">Resilience</h2>
+      <p>
+        Retries with jittered backoff, circuit breaker, timeouts. Used internally by{' '}
+        <code>loadRemoteEntry</code>; exposed for app-level fetches.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`withRetry<T>(fn: () => Promise<T>, opts?: {
+  attempts?: number;              // default 3
+  baseDelayMs?: number;           // default 200
+  maxDelayMs?: number;            // default 5_000
+  jitter?: number;                // 0..1, default 0.3
+  shouldRetry?: (err: unknown, attempt: number) => boolean;
+}): Promise<T>;
+
+createCircuitBreaker(opts: {
+  threshold: number;              // failures before opening
+  resetMs: number;
+}): {
+  exec<T>(fn: () => Promise<T>): Promise<T>;
+  state: 'closed' | 'open' | 'half';
+};
+
+withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>, ms: number): Promise<T>;`}
+      />
+
+      <h2 id="fonts">Fonts</h2>
+      <CodeBlock
+        language="ts"
+        code={`buildFontPreloadLink(href: string, opts?: { type?: string; crossorigin?: 'anonymous' | 'use-credentials' }): {
+  rel: 'preload'; as: 'font'; href: string; type: string; crossorigin: string;
+};
+
+buildFontFaceCss(faces: Array<{
+  family: string;
+  src: string;
+  weight?: number | string;
+  style?: 'normal' | 'italic';
+  display?: 'auto' | 'block' | 'swap' | 'fallback' | 'optional';
+  unicodeRange?: string;
+}>): string;
+
+googleFontsUrl(opts: { families: Array<{ family: string; weights: number[] | { italic: boolean; weight: number }[] }> }): string;
+googleFontsPreconnectLinks(): Array<{ rel: 'preconnect'; href: string; crossorigin?: 'anonymous' }>;`}
+      />
+
+      <h2 id="image">Image</h2>
+      <CodeBlock
+        language="ts"
+        code={`<Image
+  src: string;
+  alt: string;
+  width: number;
+  height: number;
+  widths?: number[];
+  formats?: Array<'avif' | 'webp' | 'jpg' | 'png'>;
+  breakpoints?: Array<{ minWidth: number; size: string }>;
+  fetchPriority?: 'high' | 'low' | 'auto';
+  loading?: 'lazy' | 'eager';
+/>
+
+buildSrcset(template: string, opts: { widths: number[] } | { density: number[] }): string;
+buildSizes(opts: { breakpoints: Array<{ minWidth: number; size: string }>; fallback: string }): string;
+buildImagePreloadLink(template: string, opts: {
+  widths?: number[];
+  sizes?: string;
+  fetchPriority?: 'high' | 'low' | 'auto';
+}): { rel: 'preload'; as: 'image'; imagesrcset: string; imagesizes?: string; fetchpriority?: string };`}
+      />
+
+      <h2 id="deprecation">Deprecation helper</h2>
+      <p>
+        Emits a one-time warning per call-site. Used by the runtime to flag removed APIs; usable
+        in app code to retire internal helpers without breaking consumers immediately.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`deprecate(message: string, opts?: { since?: string; replacement?: string }): void;
+deprecated<T extends (...args: any[]) => any>(fn: T, message: string): T;`}
+      />
     </>
   );
 }

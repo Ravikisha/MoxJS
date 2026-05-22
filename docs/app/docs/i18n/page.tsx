@@ -14,7 +14,7 @@ export default function I18nPage() {
       <p>
         A ~3 KB i18n primitive shaped after ICU MessageFormat: simple placeholders, plural arms,
         number formatting, lazy catalogs, change-listener for re-rendering on locale swap. No
-        dependencies beyond <code>Intl</code>.
+        dependencies beyond <code>Intl</code> — runs on Node, the browser, and edge workers.
       </p>
 
       <h2 id="quickstart">Quickstart</h2>
@@ -44,7 +44,7 @@ await i18n.setLocale('fr');
 i18n.t('items', { count: 0 });               // 'Aucun élément'`}
       />
 
-      <h2 id="interpolation">Interpolation grammar</h2>
+      <h2 id="grammar">Interpolation grammar</h2>
       <table>
         <thead><tr><th>Token</th><th>Use</th></tr></thead>
         <tbody>
@@ -57,10 +57,19 @@ i18n.t('items', { count: 0 });               // 'Aucun élément'`}
         </tbody>
       </table>
 
-      <h2 id="lazy-catalogs">Lazy catalogs</h2>
+      <h2 id="missing">Missing keys</h2>
+      <p>
+        If a key is missing in the active locale, the runtime tries (in order): the base-language
+        catalog (<code>en-US</code> → <code>en</code>), the fallback locale, and finally the key
+        itself. The key fallback makes development obvious — you immediately see which strings need
+        translation.
+      </p>
+
+      <h2 id="lazy">Lazy catalogs</h2>
       <p>
         Pass a <code>loader</code> to fetch a catalog on demand. The first call to{' '}
-        <code>setLocale(x)</code> awaits the loader and caches the result.
+        <code>setLocale(x)</code> awaits the loader and caches the result. Subsequent locale swaps
+        are synchronous.
       </p>
       <CodeBlock
         language="ts"
@@ -81,7 +90,7 @@ i18n.t('greet', { name: 'Ada' });`}
       <p>
         <code>detectLocale(acceptLanguage, supported, fallback)</code> parses an{' '}
         <code>Accept-Language</code> header, respects <code>q</code> values, and prefers exact
-        matches over base-language fallbacks.
+        matches over base-language fallbacks. Pure function — safe on edge runtimes.
       </p>
       <CodeBlock
         language="ts"
@@ -93,6 +102,83 @@ export async function handler(req: Request): Promise<Response> {
   const i18n = createI18n({ locale, catalogs: await loadCatalogs(locale) });
   // …render with i18n.t(...)
 }`}
+      />
+
+      <h2 id="hydration">Hydrating client from server</h2>
+      <p>
+        Serialize the active locale + catalog into the HTML, then re-create the i18n instance on
+        the client. <code>serializeState</code> from <code>@moxjs/ssr</code> safely escapes the
+        JSON for inline script injection.
+      </p>
+      <CodeBlock
+        language="ts"
+        filename="server"
+        code={`import { serializeState } from '@moxjs/ssr';
+
+const html = template
+  .replace('</head>', \`
+    <script id="__MOXJS_I18N__" type="application/json">\${serializeState({
+      locale: i18n.locale,
+      catalogs: i18n.catalogs,
+    })}</script>
+  </head>\`);`}
+      />
+      <CodeBlock
+        language="ts"
+        filename="client"
+        code={`import { createI18n } from '@moxjs/i18n';
+
+const raw = document.getElementById('__MOXJS_I18N__')?.textContent;
+const hydrated = raw ? JSON.parse(raw) : undefined;
+
+export const i18n = createI18n({
+  locale: hydrated?.locale ?? 'en',
+  catalogs: hydrated?.catalogs ?? {},
+  fallbackLocale: 'en',
+});`}
+      />
+
+      <h2 id="react">React adapter (BYO)</h2>
+      <p>
+        The package stays framework-agnostic. A tiny React adapter is one <code>useSyncExternalStore</code> away:
+      </p>
+      <CodeBlock
+        language="tsx"
+        code={`import { useSyncExternalStore } from 'react';
+import { i18n } from './i18n';
+
+export function useTranslation() {
+  useSyncExternalStore(i18n.subscribe, () => i18n.locale, () => i18n.locale);
+  return { t: i18n.t.bind(i18n), locale: i18n.locale, setLocale: i18n.setLocale.bind(i18n) };
+}`}
+      />
+
+      <h2 id="i18n-shape">I18n interface</h2>
+      <CodeBlock
+        language="ts"
+        code={`interface I18n {
+  locale: string;
+  t(key: string, values?: FormatValues): string;
+  setLocale(locale: string): Promise<void>;
+  subscribe(listener: () => void): () => void;
+  load(locale: string): Promise<void>;       // load without switching
+  catalogs: Catalog;
+}`}
+      />
+
+      <h2 id="multi-locale">Multi-locale SSR</h2>
+      <p>
+        Generating the same page in N locales? Build one i18n per locale and run them in parallel —
+        the runtime is stateless except for the catalogs object, so memory stays bounded.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`const renders = await Promise.all(
+  ['en', 'fr', 'ja'].map(async (locale) => {
+    const i18n = createI18n({ locale, catalogs: { [locale]: await loadCatalog(locale) } });
+    return { locale, html: await renderRouteToString(App, { i18n, path: '/' }) };
+  }),
+);`}
       />
 
       <Callout variant="info" title="Subscribe + re-render">

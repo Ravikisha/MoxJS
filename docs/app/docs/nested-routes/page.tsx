@@ -26,7 +26,7 @@ export default function NestedRoutes() {
         <code>NestedRouter</code> inside a page.
       </Callout>
 
-      <h2>Define the tree</h2>
+      <h2 id="define">Define the tree</h2>
       <CodeBlock
         language="tsx"
         code={`import { NestedRouter, Outlet, type NestedRoute } from '@moxjs/runtime';
@@ -64,20 +64,27 @@ function AppShell() {
 }`}
       />
 
-      <h2>Index routes</h2>
+      <h2 id="index">Index routes</h2>
       <p>
-        Mark a child with <code>index: true</code> to render when the parent path matches exactly. Only one
-        index per children array.
+        Mark a child with <code>index: true</code> to render when the parent path matches exactly.
+        Only one index per children array. Index routes do not contribute a URL segment — they
+        decide what shows up at the parent&apos;s URL.
       </p>
 
-      <h2>Lazy layouts</h2>
+      <h2 id="lazy">Lazy layouts</h2>
       <p>
-        Any route can ship <code>lazy: () =&gt; import(...)</code> instead of <code>element</code>. The module
-        default export becomes the layout/page. React Suspense shows <code>fallback</code> while the chunk
-        loads.
+        Any route can ship <code>lazy: () =&gt; import(...)</code> instead of <code>element</code>.
+        The module default export becomes the layout/page. React Suspense shows{' '}
+        <code>fallback</code> while the chunk loads. Use lazy for everything except the smallest
+        cross-cutting shells (sidebar, top nav) so the initial bundle stays minimal.
       </p>
 
-      <h2>Params from ancestors</h2>
+      <h2 id="params">Params from ancestors</h2>
+      <p>
+        <code>useOutletParams</code> reads the cumulative params from every ancestor segment, not
+        just the deepest. Nested <code>:userId</code> + <code>:postId</code> are both available in
+        the deepest component.
+      </p>
       <CodeBlock
         language="tsx"
         code={`import { useOutletParams } from '@moxjs/runtime';
@@ -104,8 +111,61 @@ function UserDetail() {
           <tr><td><code>lazy</code></td><td><code>() =&gt; Promise&lt;{'{ default: ComponentType }'}&gt;</code></td><td>Code-split chunk. Suspense fallback = parent <code>NestedRouter</code> <code>fallback</code>.</td></tr>
           <tr><td><code>children</code></td><td><code>NestedRoute[]</code></td><td>Sub-routes rendered into <code>&lt;Outlet /&gt;</code>.</td></tr>
           <tr><td><code>guards</code></td><td><code>RouteGuard[]</code></td><td>Run before render. Falsy blocks; <code>{'{ redirect }'}</code> redirects.</td></tr>
+          <tr><td><code>errorElement</code></td><td><code>ReactNode</code></td><td>Boundary for this subtree — replaces the default error UI.</td></tr>
+          <tr><td><code>handle</code></td><td><code>unknown</code></td><td>Arbitrary metadata — e.g. breadcrumb labels, tab IDs, analytics tags.</td></tr>
         </tbody>
       </table>
+
+      <h2 id="error">Error boundaries</h2>
+      <p>
+        Add <code>errorElement</code> to any route to isolate failures to that subtree. A child
+        crash bubbles up to the nearest <code>errorElement</code> ancestor, leaving the rest of the
+        shell intact.
+      </p>
+      <CodeBlock
+        language="tsx"
+        code={`const routes: NestedRoute[] = [
+  {
+    path: '/dashboard',
+    element: <DashboardShell />,
+    errorElement: <DashboardError />,           // failures here keep the global header
+    children: [
+      { index: true, lazy: () => import('./Overview.js') },
+      { path: 'reports/*', lazy: () => import('./reports/Router.js'), errorElement: <ReportsError /> },
+    ],
+  },
+];`}
+      />
+
+      <h2 id="handle">Route metadata via <code>handle</code></h2>
+      <p>
+        Walk the matched route chain to build breadcrumbs, sidebars, analytics tags. Each
+        route&apos;s <code>handle</code> field is opaque — define your own convention.
+      </p>
+      <CodeBlock
+        language="tsx"
+        code={`const routes: NestedRoute[] = [
+  {
+    path: '/billing',
+    element: <BillingShell />,
+    handle: { breadcrumb: 'Billing' },
+    children: [
+      { path: 'invoices/:id', element: <Invoice />, handle: { breadcrumb: 'Invoice' } },
+    ],
+  },
+];
+
+import { useMatchedRoutes } from '@moxjs/runtime';
+
+function Breadcrumbs() {
+  const matched = useMatchedRoutes<{ breadcrumb: string }>();
+  return (
+    <nav>
+      {matched.map((m, i) => <span key={i}>{m.handle.breadcrumb}</span>)}
+    </nav>
+  );
+}`}
+      />
 
       <h2 id="resolve-chain">Resolving outside React</h2>
       <p>
@@ -146,6 +206,25 @@ const chain = resolveChain(routes, '/app/users/42');
     ],
   },
 ];`}
+      />
+
+      <h2 id="ssr">SSR with nested routes</h2>
+      <p>
+        On the server, <code>resolveChain</code> + a sync renderer cover the same shape without
+        relying on browser history. Pair with <code>renderRouteToString</code> from{' '}
+        <code>@moxjs/ssr</code>:
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`import { resolveChain } from '@moxjs/runtime';
+import { renderRouteToString } from '@moxjs/ssr';
+
+const chain = resolveChain(routes, new URL(request.url).pathname);
+if (!chain.length) return new Response('Not Found', { status: 404 });
+
+const html = await renderRouteToString(<NestedRouter routes={routes} />, {
+  path: new URL(request.url).pathname,
+});`}
       />
 
       <Callout variant="warn" title="Don't mount NestedRouter twice on one URL">

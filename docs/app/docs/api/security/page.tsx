@@ -1,9 +1,10 @@
 import { CodeBlock } from '@/components/site/code-block';
+import { Callout } from '@/components/docs/callout';
 
 export const metadata = {
   title: '@moxjs/security API',
   description:
-    'CSP builder, SRI helpers, origin allowlist, rate-limit guard, audit logger, sanitization helpers.',
+    'CSP builder, SRI helpers, origin allowlist, rate-limit guard, audit logger, sanitization helpers, OAuth helpers, sandbox bridge.',
 };
 
 export default function SecApi() {
@@ -16,7 +17,18 @@ export default function SecApi() {
         side-effect-free.
       </p>
 
+      <Callout variant="info" title="Runtime guarantees">
+        Every export runs unchanged on Vercel Edge, Cloudflare Workers, Deno Deploy, and Node. No
+        polyfills required — the package only uses <code>crypto.subtle</code>, <code>fetch</code>,
+        <code>TextEncoder</code>, and standard JS.
+      </Callout>
+
       <h2 id="csp">CSP</h2>
+      <p>
+        Build a strict-dynamic + nonce CSP that lets federated remoteEntry scripts execute while
+        blocking everything else. <code>cspMiddleware</code> wraps Express/Connect; edge handlers
+        call <code>buildCsp</code> directly.
+      </p>
       <CodeBlock
         language="ts"
         code={`buildCsp(opts?: {
@@ -40,7 +52,37 @@ cspFastifyHook(opts): FastifyPreHandler;
 cspHeaderFactory(opts): (req: { url: string }) => { header: string; nonce: string };`}
       />
 
+      <h3>Wiring a strict-dynamic CSP into an SSR response</h3>
+      <CodeBlock
+        language="ts"
+        code={`import { buildCsp, generateNonce, safeJsonForScript } from '@moxjs/security';
+
+export async function handler(req: Request): Promise<Response> {
+  const nonce = generateNonce();
+  const csp = buildCsp({
+    nonce,
+    strictDynamic: true,
+    extra: { 'connect-src': ['https://api.acme.com'] },
+  });
+
+  const html = template
+    .replace('__NONCE__', nonce)
+    .replace('__STATE__', safeJsonForScript(state));
+
+  return new Response(html, {
+    headers: {
+      'content-type': 'text/html; charset=utf-8',
+      'content-security-policy': csp,
+    },
+  });
+}`}
+      />
+
       <h2 id="sri">SRI</h2>
+      <p>
+        Subresource Integrity hashes for federation entry scripts. Generate the hash at build time
+        with <code>sriHashFromUrl</code> or compute on-demand from in-memory content.
+      </p>
       <CodeBlock
         language="ts"
         code={`sriHash(content: string | ArrayBuffer | Uint8Array, algo?: 'sha256' | 'sha384' | 'sha512'): Promise<string>;
@@ -48,7 +90,27 @@ sriAttributes(content, algo?, crossorigin?: 'anonymous' | 'use-credentials'): Pr
 sriHashFromUrl(url: string, opts?: { algo?: 'sha256' | 'sha384' | 'sha512'; allowHttp?: boolean }): Promise<string>;`}
       />
 
+      <h3>Build-time manifest of remote SRI hashes</h3>
+      <CodeBlock
+        language="ts"
+        code={`import { sriHashFromUrl } from '@moxjs/security';
+
+const remotes = [
+  'https://cdn.acme.com/dashboard/remoteEntry.js',
+  'https://cdn.acme.com/billing/remoteEntry.js',
+];
+
+const manifest = Object.fromEntries(
+  await Promise.all(remotes.map(async (url) => [url, await sriHashFromUrl(url, { algo: 'sha384' })])),
+);
+// → { 'https://cdn.acme.com/dashboard/remoteEntry.js': 'sha384-...' }`}
+      />
+
       <h2 id="allowlist">Allowlist</h2>
+      <p>
+        Single-label (<code>*</code>) and multi-label (<code>**</code>) wildcards. Defense-in-depth
+        even with SRI — rejects URLs at the registry level before the network request fires.
+      </p>
       <CodeBlock
         language="ts"
         code={`new RemoteAllowlist(rules: string[], opts?: { schemes?: string[] });
@@ -61,7 +123,24 @@ allow.assertAllowed(url: string, name?: string): void;   // throws on miss
 allow.isAllowed(url: string, name?: string): boolean;`}
       />
 
+      <CodeBlock
+        language="ts"
+        code={`import { RemoteAllowlist } from '@moxjs/security';
+import { getRemoteRegistry } from '@moxjs/runtime';
+
+const allow = new RemoteAllowlist([
+  'https://cdn.acme.com',
+  'https://*.preview.acme.com',
+]);
+
+getRemoteRegistry().setGuard((url) => allow.allows(url));`}
+      />
+
       <h2 id="rate-limit">Rate limiting</h2>
+      <p>
+        Token-bucket rate limiter for protected endpoints (auth, write paths). In-memory LRU by
+        default; bring your own store for distributed enforcement.
+      </p>
       <CodeBlock
         language="ts"
         code={`createRateLimitGuard(opts: {
@@ -81,7 +160,31 @@ interface RateLimitStore {
 }`}
       />
 
+      <h3>Edge worker usage</h3>
+      <CodeBlock
+        language="ts"
+        code={`const limiter = createRateLimitGuard({
+  capacity: 30,
+  refillPerSec: 5,
+  keyFor: (req) => req.headers['cf-connecting-ip'] ?? 'anon',
+});
+
+export default {
+  async fetch(req) {
+    const decision = await limiter({ url: req.url, headers: Object.fromEntries(req.headers) });
+    if (!decision.allowed) {
+      return new Response('Rate limit', { status: 429, headers: decision.headers });
+    }
+    return handle(req);
+  },
+};`}
+      />
+
       <h2 id="audit">Audit log</h2>
+      <p>
+        Structured audit logger with built-in PII redaction. Multiple sinks; the buffer sink is
+        ideal for tests.
+      </p>
       <CodeBlock
         language="ts"
         code={`new AuditLogger(opts: {
@@ -98,6 +201,42 @@ interface AuditSink { (entry: NormalizedEntry): Promise<void> | void }
 bufferSink(): { sink: AuditSink; drain(): NormalizedEntry[] };`}
       />
 
+      <h2 id="oauth">OAuth helpers</h2>
+      <p>
+        Stateless helpers for PKCE flow + state-cookie protection. The package never stores
+        anything itself — you persist via cookies / KV.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`generatePkcePair(): Promise<{ verifier: string; challenge: string }>;
+buildAuthorizeUrl(opts: { authorizeEndpoint, clientId, redirectUri, scope, state, codeChallenge }): string;
+exchangeCodeForToken(opts: { tokenEndpoint, clientId, redirectUri, code, verifier }): Promise<TokenResponse>;
+
+constantTimeEqual(a: string, b: string): boolean;       // for state-cookie comparison
+generateStateValue(bytes?: number): string;`}
+      />
+
+      <h2 id="sandbox">Sandbox bridge</h2>
+      <p>
+        Postmessage bridge between a sandboxed iframe and the host. The bridge enforces an origin
+        allowlist and a schema per message kind. Use for third-party widgets where{' '}
+        <code>ShadowRemote</code> isn&apos;t isolation enough.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`createSandboxBridge<E>(opts: {
+  iframe: HTMLIFrameElement;
+  origin: string | string[];        // exact or wildcard
+  schemas: { [K in keyof E]?: Validator<E[K]> };
+}): SandboxBridge<E>;
+
+interface SandboxBridge<E> {
+  send<K extends keyof E>(kind: K, payload: E[K]): void;
+  on<K extends keyof E>(kind: K, handler: (payload: E[K]) => void): () => void;
+  destroy(): void;
+}`}
+      />
+
       <h2 id="sanitize">Sanitize</h2>
       <CodeBlock
         language="ts"
@@ -106,6 +245,27 @@ safeJsonForScript(value: unknown): string;
 isSafePathname(path: string): boolean;
 pruneProtoKeys<T extends object>(obj: T): T;     // strips __proto__, constructor, prototype`}
       />
+
+      <h3><code>safeJsonForScript</code></h3>
+      <p>
+        Use whenever you inline server-rendered state into a <code>&lt;script&gt;</code> tag.
+        Escapes <code>&lt;/script&gt;</code>, line separator (U+2028), and paragraph separator
+        (U+2029) — the three sequences that turn a JSON blob into a script-injection vector.
+      </p>
+      <CodeBlock
+        language="tsx"
+        code={`<script id="__STATE__" type="application/json">
+  {safeJsonForScript(state)}
+</script>`}
+      />
+
+      <h2 id="middleware">Composite security middleware</h2>
+      <p>
+        <code>cspMiddleware</code>, <code>cspFastifyHook</code>, and <code>cspHeaderFactory</code>{' '}
+        are pre-baked compositions of CSP + nonce + Referer-Policy + X-Content-Type-Options. They
+        cover ~80% of production header policies; reach for the lower-level builders when you need
+        custom directives.
+      </p>
     </>
   );
 }

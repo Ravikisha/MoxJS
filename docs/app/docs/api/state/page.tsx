@@ -4,7 +4,7 @@ import { Callout } from '@/components/docs/callout';
 export const metadata = {
   title: '@moxjs/state API',
   description:
-    'Singleton store registry, simple stores, Redux-style reducer stores, memoized selectors, structured selectors.',
+    'Singleton store registry, simple stores, Redux-style reducer stores, memoized selectors, structured selectors, middleware, devtools.',
 };
 
 export default function StateApi() {
@@ -29,6 +29,9 @@ export default function StateApi() {
       </Callout>
 
       <h2 id="simple">SimpleStore</h2>
+      <p>
+        Single-value store with subscribe + set. Equality check prevents needless re-renders.
+      </p>
       <CodeBlock
         language="ts"
         code={`getSimpleStore<T>(key: string, initial: T): SimpleStore<T>;
@@ -42,7 +45,24 @@ class SimpleStore<T> {
 }`}
       />
 
+      <h3>Usage</h3>
+      <CodeBlock
+        language="ts"
+        code={`import { getSimpleStore } from '@moxjs/state';
+
+const theme = getSimpleStore<'light' | 'dark'>('theme', 'light');
+
+theme.subscribe((next) => document.documentElement.dataset.theme = next);
+
+theme.set('dark');           // notifies
+theme.set('dark');           // skipped — value didn't change`}
+      />
+
       <h2 id="store">Reducer store</h2>
+      <p>
+        Redux-shaped store: state + reducer + dispatch. Reducers cannot dispatch inside themselves
+        (throws) — defer with <code>queueMicrotask</code> if you need a follow-up action.
+      </p>
       <CodeBlock
         language="ts"
         code={`type Reducer<S, A> = (state: S, action: A) => S;
@@ -60,7 +80,97 @@ interface Store<S, A> {
 }`}
       />
 
+      <h3>Usage</h3>
+      <CodeBlock
+        language="ts"
+        code={`import { getStore } from '@moxjs/state';
+
+interface Cart { items: { sku: string; qty: number }[] }
+type Action =
+  | { type: 'add'; sku: string }
+  | { type: 'remove'; sku: string }
+  | { type: 'clear' };
+
+const cart = getStore<Cart, Action>('cart', { items: [] }, (state, action) => {
+  switch (action.type) {
+    case 'add':    return { items: [...state.items, { sku: action.sku, qty: 1 }] };
+    case 'remove': return { items: state.items.filter((i) => i.sku !== action.sku) };
+    case 'clear':  return { items: [] };
+    default:       return state;
+  }
+});
+
+cart.dispatch({ type: 'add', sku: 'BOOK-42' });
+cart.getState().items;       // [{ sku: 'BOOK-42', qty: 1 }]`}
+      />
+
+      <h2 id="middleware">Middleware</h2>
+      <p>
+        Standard Redux-shape middleware. <code>thunkMiddleware</code> lets you dispatch async
+        functions; <code>loggerMiddleware</code> prints actions + state diffs;{' '}
+        <code>persistenceMiddleware</code> serializes the store to <code>localStorage</code> or a
+        custom sink.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`createStoreWithMiddleware<S, A>(
+  initialState: S,
+  reducer: Reducer<S, A>,
+  middlewares: Middleware<S, A>[],
+): Store<S, A>;
+
+applyMiddleware<S, A>(store: Store<S, A>, ...middlewares: Middleware<S, A>[]): Store<S, A>;
+
+thunkMiddleware<S, A>(): Middleware<S, A | ThunkAction<S, A>>;
+loggerMiddleware<S, A>(opts?: LoggerOptions): Middleware<S, A>;
+persistenceMiddleware<S, A>(opts: PersistenceMiddlewareOptions<S>): Middleware<S, A>;
+
+type Middleware<S, A> =
+  (api: MiddlewareApi<S, A>) => (next: (action: A) => void) => (action: A) => void;
+
+interface MiddlewareApi<S, A> {
+  getState(): S;
+  dispatch(action: A): void;
+}`}
+      />
+
+      <h3>Thunks</h3>
+      <CodeBlock
+        language="ts"
+        code={`import { createStoreWithMiddleware, thunkMiddleware } from '@moxjs/state';
+
+const cart = createStoreWithMiddleware<Cart, Action>(initial, reducer, [thunkMiddleware()]);
+
+const fetchCart = (): ThunkAction<Cart, Action> => async (dispatch) => {
+  const res = await fetch('/api/cart');
+  const items = await res.json();
+  dispatch({ type: 'replace', items });
+};
+
+cart.dispatch(fetchCart());`}
+      />
+
+      <h3>Persistence</h3>
+      <CodeBlock
+        language="ts"
+        code={`import { persistenceMiddleware } from '@moxjs/state';
+
+const persisted = persistenceMiddleware<Cart, Action>({
+  key: 'moxjs:cart',
+  storage: typeof localStorage !== 'undefined' ? localStorage : undefined,
+  serialize: JSON.stringify,
+  deserialize: JSON.parse,
+  throttleMs: 100,
+  filter: (state) => ({ items: state.items }),     // omit derived fields
+});`}
+      />
+
       <h2 id="selectors">Selectors</h2>
+      <p>
+        Memoized derivation. <code>createSelector</code> uses reference equality across the input
+        selectors; <code>createSelectorWith</code> takes a custom equality fn (e.g.{' '}
+        <code>shallowEqual</code> for object-shaped derivations).
+      </p>
       <CodeBlock
         language="ts"
         code={`type Selector<S, R> = (state: S) => R;
@@ -81,11 +191,73 @@ createStructuredSelector<S, M extends Record<string, Selector<S, any>>>(
 ): Selector<S, { [K in keyof M]: ReturnType<M[K]> }>;`}
       />
 
+      <h3>Examples</h3>
+      <CodeBlock
+        language="ts"
+        code={`import { createSelector, createStructuredSelector } from '@moxjs/state';
+
+const items = (s: Cart) => s.items;
+const total = createSelector(items, (xs) => xs.reduce((n, i) => n + i.qty, 0));
+const view  = createStructuredSelector({
+  count: total,
+  items,
+});
+
+view(cart.getState());       // { count: 3, items: [...] }`}
+      />
+
+      <h2 id="devtools">Redux DevTools</h2>
+      <p>
+        <code>connectDevtools(store, opts?)</code> wires the store into the Redux DevTools browser
+        extension. No-op when the extension is missing. Use in dev only; the connection has
+        non-trivial CPU cost.
+      </p>
+      <CodeBlock
+        language="ts"
+        code={`connectDevtools<S, A>(store: Store<S, A>, opts?: DevtoolsOptions): () => void;
+
+interface DevtoolsOptions {
+  name?: string;             // shown in the dropdown
+  trace?: boolean;           // capture action stack traces
+  maxAge?: number;           // history depth
+}
+
+if (process.env.NODE_ENV !== 'production') {
+  connectDevtools(cart, { name: 'cart' });
+}`}
+      />
+
+      <h2 id="hydration">SSR hydration</h2>
+      <p>
+        Serialize on the server, hydrate on the client. Pair with <code>safeJsonForScript</code>{' '}
+        for the inline script payload.
+      </p>
+      <CodeBlock
+        language="ts"
+        filename="server"
+        code={`const store = getStore('cart', initial, reducer);
+const state = store.getState();
+template = template.replace('</head>', \`<script id="__CART__">window.__CART__=\${safeJsonForScript(state)}</script></head>\`);`}
+      />
+      <CodeBlock
+        language="ts"
+        filename="client"
+        code={`const initial = (window as any).__CART__ ?? defaultInitial;
+const store = getStore('cart', initial, reducer);   // first call wins — server state takes effect`}
+      />
+
       <h2 id="federation">Federation singleton</h2>
       <p>
         <code>@moxjs/state</code> is declared as a singleton in the generated{' '}
-        <code>moxjs.federation.json</code>. Combined with the <code>globalThis</code> registry, two
-        bundles loading the package independently still write to the same store map.
+        <code>moxjs.federation.json</code>. Combined with the <code>globalThis</code> registry,
+        two bundles loading the package independently still write to the same store map.
+      </p>
+
+      <h2 id="warnings">Mismatch warnings</h2>
+      <p>
+        <code>getStore(key, initial, reducer)</code> compares the signature of subsequent calls
+        against the first call. Different signatures log a warning in development — typically
+        signals two bundles disagreeing on the store shape.
       </p>
 
       <h2 id="testing">Testing helpers</h2>
@@ -93,7 +265,11 @@ createStructuredSelector<S, M extends Record<string, Selector<S, any>>>(
         language="ts"
         code={`// @internal — useful in test setup
 _resetStore(key?: string): void;
-_resetSimpleStore(key?: string): void;`}
+_resetSimpleStore(key?: string): void;
+
+import { _resetStore } from '@moxjs/state';
+
+beforeEach(() => { _resetStore(); });`}
       />
     </>
   );
